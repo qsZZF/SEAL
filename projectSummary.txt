@@ -1,0 +1,53 @@
+Project Summary: SEAL (Source Electromagnetics & Analysis Lab) Toolbox
+This document summarizes the current state of development for the SEAL Toolbox, a MATLAB-based framework for Electromagnetic Source Imaging (ESI). The primary goal is to provide a comprehensive and user-friendly environment for implementing and evaluating ESI algorithms.
+1. Core Architecture & Philosophy
+
+Project Structure: A standard MATLAB toolbox directory structure has been defined, including folders for Algorithms/, CoreFunctions/, DataGeneration/, and Validation/Metrics/. The project is managed via a GitHub repository.
+Modular Design: The design philosophy is based on a powerful, centralized core function (seal_MNE.m) that handles the fundamental MNE solution, with more advanced algorithms acting as wrappers that perform specific pre-processing (e.g., source covariance construction) or post-processing (e.g., normalization) steps.
+2. Implemented ESI Algorithms
+The following functions have been designed and specified. They are located in the Algorithms/ folder.
+
+seal_MNE.m (Core Engine):
+This is the central solver for weighted Minimum Norm Estimates.
+Features:Accepts Data, L (lead field), and optional parameters.
+Performs noise whitening based on a provided NoiseCovariance matrix.
+Supports automatic depth weighting by setting 'SourceCovariance', 'auto', where the source variance is set proportional to the inverse squared norm of the lead field columns (Rs,jj
+​=(1/∥Lw,j
+​∥)2
+)Bayesian Electromagnetic Spatio-Temporal Imaging of Extended Sources Based on Matrix Factorization.pdf, Debiased_Estimation_and_Inference_for_SpatialTemporal_EEG_MEG_Source_Imaging.pdf, 1-s2.0-S1053811920309150-main.pdf, Simulation_Data_Generate.m, eLORETA.pdf, ESIspatialMetric.m, ADMM_GroupLASSO.py, ESItemporalMetric.m, 2021_Robust estimation of noise for electromagnetic brain imaging with the champagne algorithm.pdf, PerformanceMetric.m, Simulation_ERPgaussian.m, mxne_debiasing.py, 2001_Noninvasive Localization of Electromagnetic Epileptic Activity. I. Method Descriptions and Simulations.pdf, phase_noise.m, ersp_generate_signal.m, PatchGenerate.m, flt_MNE.m, MNE.m].
+Uses a robust SVD-based solver.
+Scales the RegularizationParameter based on an SNR criterion involving trace(L_w R_s L_w') / N_{channels}.
+Outputs: Source estimate and a Param struct containing the final InverseOperator and the ResolutionMatrixSource.
+seal_dSPM.m & seal_sLORETA.m (Normalization-based):
+These functions act as wrappers around seal_MNE.m.
+They first call seal_MNE (typically with an identity Rs) to get a base MNE solution.
+They then perform post-hoc normalization on the result (S_mne) and compute a final algorithm-specific inverse operator (dSPM_InverseOperator or sLORETA_InverseOperator).dSPM: Normalizes by the row norms of the MNE operator for whitened data (M_w).
+sLORETA: Normalizes based on the diagonal of the resolution matrix (M_w * L_w), handling both single (nd=1) and multiple (nd>1) orientation cases.
+seal_LORETA_Rs.m & seal_LAURA_Rs.m (Rs-Construction):
+These implement LORETA and LAURA by constructing a specific source covariance matrix (Rs_LORETA or Rs_LAURA) that incorporates spatial priors (Laplacian for LORETABayesian Electromagnetic Spatio-Temporal Imaging of Extended Sources Based on Matrix Factorization.pdf:50, 51]; distance-based autoregressive operator for LAURA) and optional depth weighting.
+This custom Rs is then passed to seal_MNE.m for the final solution.
+seal_eLORETA.m (Iterative Solver):
+This is a standalone iterative implementation based on the Pascual-Marqui (2007) paper and user-provided scripts.
+It does not call seal_MNE.m. Instead, it iteratively finds the optimal source weighting matrix W and computes the final eLORETA inverse operator and source estimate directly.
+seal_DeESI.m & seal_irMxNE.m (Advanced Sparse Methods):
+Structural MATLAB templates for these functions have been created based on user-provided Python scripts (ADMM_GroupLASSO.py, mxne_optim.py).
+They outline the complex optimization steps (ADMM for DeESI, Block Coordinate Descent for MxNE, and iterative reweighting for irMxNE) and debiasing procedures. The core solver logic within these templates is a placeholder requiring detailed translation.
+3. Data Simulation
+
+seal_generate_waveform.m (Located in Utilities/):A unified, flexible function has been created to generate various temporal activities.
+Supported Types: ERP (with Gaussian or Gabor components), ERSP, Resting-State Rhythms (e.g., alpha, with bursting), Spikes, Pink Noise, and AR Models.
+It uses a waveformParams struct and contains internal defaults for ease of use.
+seal_simulate_data.m (Located in DataGeneration/):The high-level simulation function has been designed.
+Spatial Properties: It supports defining active regions as patches grown from seed voxels, with uniform or Gaussian falloff activation profiles.
+Temporal Properties: It calls seal_generate_waveform.m to create the time course for each active patch.
+Noise Model: A realistic two-stage noise model is outlined:Source-level background activity: e.g., pink noise on distributed sources, controlled by a source-level Signal-to-Interference Ratio (SNIR).
+Sensor-level measurement noise: e.g., Gaussian white noise, controlled by a final Signal-to-Noise Ratio (SNR).
+4. Performance Evaluation
+
+seal_evaluate_spatial_metrics.m (Located in Validation/Metrics/):A single, efficient wrapper function has been created to compute a suite of spatial metrics.
+Helper functions for each metric are embedded locally to avoid redundant calculations (e.g., the distance matrix for DLE and SD is computed once).
+Metrics Included: DLE (BESTIES-like definition), SD (weighted RMS distance), ROC AUC (with bias correction), Precision-Recall AUC, F1-Score, Precision, Recall, APrime.
+Flexibility: Supports both Euclidean and Geodesic distance types.
+seal_evaluate_temporal_metrics.m (Located in Validation/Metrics/):A function to calculate temporal performance.
+Metrics Included: MSE (with normalization option), various Pearson Correlations (voxel-wise, ROI-averaged, patch-averaged), and other suggested metrics like the R-square score (R2
+), Peak Latency/Amplitude Difference, and Dynamic Time Warping (DTW) have been discussed.
