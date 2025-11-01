@@ -27,8 +27,7 @@ function defaultName = findAvailableName(basePath, namePattern)
     
     % Get all directories in the base path
     items = dir(basePath);
-    isDir = [items.isdir];
-    dirNames = {items(isDir).name};
+    dirNames = {items.name};
     
     % Remove '.' and '..'
     dirNames = dirNames(~ismember(dirNames, {'.', '..'}));
