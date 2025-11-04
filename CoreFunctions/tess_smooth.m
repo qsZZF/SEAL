@@ -69,9 +69,12 @@ if isKeepSize
     scale = diff(initBounds,[],1) ./ diff(finalBounds,[],1);
     % Center and apply scale
     center = mean(Vertices_sm);
-    Vertices_sm = bst_bsxfun(@minus, Vertices_sm, center);
-    Vertices_sm = bst_bsxfun(@times, Vertices_sm, scale);
-    Vertices_sm = bst_bsxfun(@plus,  Vertices_sm, center);
+    size(Vertices_sm)
+    size(center)
+    size(scale)
+    Vertices_sm = bsxfun(@minus, Vertices_sm, center); % 原始使用了 bst_bsxfun，导致报错，查阅资料这是一个brainstorm库的实现，此处使用matlab内置 
+    Vertices_sm = bsxfun(@times, Vertices_sm, scale);
+    Vertices_sm = bsxfun(@plus,  Vertices_sm, center);
     
 %     % Compute normals
 %     VertNormals = tess_normals(Vertices_sm, Faces, VertConn);
