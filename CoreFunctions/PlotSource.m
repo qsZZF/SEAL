@@ -79,9 +79,6 @@ if ~isempty(SourceData)
 cortexcolor=[.85 .85 .85];
 end
 alphaValue = 1;
-% cortexcolor=[244 176 183]/255;
-% colorMap = hot;
-% colorMap = colorMap(1:220,:);
 nargs = nargin;
 if nargs > 3
     for i = 1:2:length(varargin)
@@ -135,7 +132,11 @@ if nargs > 3
 end
 
 if isempty(ax2plot)
-    handles.h = figure('color',[0 0 0]);
+    handles.h = figure('color',[0 0 0],...
+        'MenuBar','none',...
+        'ToolBar','none',...
+        'DockControls','off');
+
     % 设置窗口位置（如果提供了）
     if ~isempty(figPosition)
         set(handles.h, 'Position', figPosition);
@@ -169,20 +170,17 @@ handles.hp=patch(handles.axes,'vertices',vc,'faces',tri,...
     'BackfaceLighting','lit','AmbientStrength',0.5,'SpecularExponent',1,...
     'SpecularColorReflectance',0.5,'EdgeLighting','gouraud','facealpha',1);
 
-material dull 
-% camlight('headlight','infinite');
+material dull;
+%camlight('headlight','infinite');
 set(handles.axes,'Xcolor',[0 0 0],'ycolor',[0 0 0],'zcolor',[0 0 0],'CameraPosition', [0 0 0],'CameraViewAngle',6);
-view([ -90 90 ])
-axis equal
+view([ -90 90 ]);
+axis equal;
 axlim=[min(vc);max(vc)]*1.2;
 axis(reshape(axlim,1,[]));
-hr = rotate3d;
 
 light('Position',[-100,0,-100]*mean(sum(vc.^2,2)));
 light('Position',[100,0,100]*mean(sum(vc.^2,2)));
 set(handles.axes, 'CameraUpVector', [0, 1, 0]);
-
-set(hr,'Enable','on');
 
 if ~isempty(SourceData)
     
@@ -227,7 +225,7 @@ if ~isempty(SourceData)
 end
 
 
-
+bind3DInteraction(handles.h, handles.axes);
 
 end
 function saveAndShowViews(handles, vc, tri, cortexcolor)
@@ -291,7 +289,7 @@ if nargin<1
 end
 switch type
     case 'active'
-       cbars = [1 1 0;1 0.3 0;0.7 0 0]; 
+        cbars = [1 1 0;1 0.3 0;0.7 0 0];
     case 'iactive'
         cbars = [0.7 0 0;1 0.3 0;1 1 0];
     case 'invactive'
@@ -301,7 +299,7 @@ switch type
     case 'pnactive'
         cbars = [1 1 0.5;1 0.6 0;1 0 0;0 0 0;0 0 1;0 0.6 1; 0.5 1 1];
 end
-    
+
 
 cbars = lineInterp(cbars,256,8);
 cbars = cbars(end:-1:1,:);
@@ -311,15 +309,95 @@ end
 function Cbar = lineInterp(cbar,cnum,pernum)
 np = size(cbar,1);
 nump = max(round(cnum/(np-1)),pernum);
-    for ic = 1:3
+for ic = 1:3
     tcolor = cbar(:,ic);
     ncolor = [];
-         for itc = 1:np-1
+    for itc = 1:np-1
         ncolor = [ncolor,linspace(tcolor(itc),tcolor(itc+1),nump)];
-         end
-         Cbar(:,ic) = ncolor';
     end
-    while size(Cbar,1)>cnum
-        Cbar(round(end/2),:)=[];
+    Cbar(:,ic) = ncolor';
+end
+while size(Cbar,1)>cnum
+    Cbar(round(end/2),:)=[];
+end
+end
+
+function bind3DInteraction(fig, ax)
+% 绑定 3D 交互：左键旋转 / 中键平移 / 滚轮缩放
+% fig: figure 或 uifigure
+% ax : axes 或 UIAxes
+
+% 关闭内置交互，避免抢事件
+try, disableDefaultInteractivity(ax); end
+zoom(fig,'off'); pan(fig,'off'); rotate3d(fig,'off');
+
+% 命中设置：点在轴或子对象上都能触发
+set(ax,'HitTest','on','PickableParts','all');
+kids = allchild(ax);
+set(kids, 'HitTest','on','PickableParts','all', ...
+    'ButtonDownFcn', @(s,e) startDrag(fig, ax, whichMode(fig)));
+
+% 在轴上按下也能触发
+set(ax,'ButtonDownFcn', @(s,e) startDrag(fig, ax, whichMode(fig)));
+
+% 全局抬起/滚轮
+set(fig,'WindowButtonUpFcn',    @(s,e) stopDrag(fig), ...
+    'WindowScrollWheelFcn', @(s,e) onScroll(ax,e));
+
+% 可选：快捷键 r 复位、l 补光
+set(fig,'KeyPressFcn',@(s,e) onKey(ax,e));
+
+    function mode = whichMode(fh)
+        % 根据鼠标键判断模式
+        % SelectionType: 'normal'(左) 'extend'(中键或Shift+左) 'alt'(右)
+        st = get(fh,'SelectionType');
+        switch st
+            case 'extend', mode = 'pan';     % 中键（或Shift+左）
+            otherwise,     mode = 'rotate';  % 默认左键旋转
+        end
     end
 end
+
+function startDrag(fig, ax, mode)
+% 记录起点与模式，并接管移动
+setappdata(fig,'md',struct('pt',get(0,'PointerLocation'),'mode',mode));
+set(fig,'WindowButtonMotionFcn', @(s,e) doDrag(fig, ax));
+end
+
+function doDrag(fig, ax)
+md  = getappdata(fig,'md');
+pt  = get(0,'PointerLocation');
+dp  = pt - md.pt;
+md.pt = pt; setappdata(fig,'md',md);
+
+switch md.mode
+    case 'pan'    % 平移（屏幕像素到相机平移）
+        k = 1.0;  % 平移灵敏度
+        camdolly(ax, -k*dp(1), -k*dp(2), 0, 'movetarget','pixels');
+
+    otherwise     % 旋转
+        camorbit(ax, -dp(1)*0.2, -dp(2)*0.2, 'camera');
+end
+drawnow limitrate
+end
+
+function stopDrag(fig)
+set(fig,'WindowButtonMotionFcn',[]);
+rmappdata(fig,'md');
+end
+
+function onScroll(ax,e)
+% 滚轮缩放：向上放大，向下缩小
+camzoom(ax, 1 - 0.1*sign(e.VerticalScrollCount));
+drawnow limitrate
+end
+
+function onKey(ax,e)
+switch lower(e.Key)
+    case 'r'
+        axis(ax,'vis3d'); view(ax,[-90 90]); camlookat(ax);
+    case 'l'
+        camlight(ax,'headlight','infinite');
+end
+end
+
