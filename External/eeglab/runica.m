@@ -828,7 +828,10 @@ end
 
 %% Compute ICA Weights
 if biasflag && extended
+    total = maxsteps;
+    pb1 = ProgressBar(total, 'desc', 'ICA');
     while step < maxsteps, %%% ICA step = pass through all the data %%%%%%%%%
+        pb1.update();
         timeperm=randperm(datalength); % shuffle data order at each step
 
         for t=1:block:lastt, %%%%%%%%% ICA Training Block %%%%%%%%%%%%%%%%%%%
@@ -839,7 +842,7 @@ if biasflag && extended
                     drawnow;
                 end
                 flag = getappdata(fig, 'run');
-                if ~flag,
+                if ~flag
                     if ~isempty(fid), fclose(fid); end
                     close; error('USER ABORT');
                 end
@@ -866,7 +869,7 @@ if biasflag && extended
                 %
                 %%%%%%%%%%% Extended-ICA kurtosis estimation %%%%%%%%%%%%%%%%%%%%%
                 %while step < maxsteps
-                if extblocks > 0 && rem(blockno,extblocks) == 0,
+                if extblocks > 0 && rem(blockno,extblocks) == 0
                     % recompute signs vector using kurtosis
                     if kurtsize < frames % 12-22-99 rand() size suggestion by M. Spratling
                         rp = fix(rand(1,kurtsize)*datalength);  % pick random subset
@@ -888,14 +891,14 @@ if biasflag && extended
                         old_kk = kk;
                     end
                     signs=diag(sign(kk+signsbias));             % pick component signs
-                    if signs == oldsigns,
+                    if signs == oldsigns
                         signcount = signcount+1;
                     else
                         signcount = 0;
                     end
                     oldsigns = signs;
                     signcounts = [signcounts signcount];
-                    if signcount >= SIGNCOUNT_THRESHOLD,
+                    if signcount >= SIGNCOUNT_THRESHOLD
                         extblocks = fix(extblocks * SIGNCOUNT_STEP);% make kurt() estimation
                         signcount = 0;                             % less frequent if sign
                     end                                         % is not changing
@@ -903,6 +906,7 @@ if biasflag && extended
             end % if extended & ~wts_blowup %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             blockno = blockno + 1;
             if wts_blowup
+                pb1.safe_close()
                 break
             end
         end % for t=1:block:lastt %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
