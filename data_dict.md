@@ -22,9 +22,9 @@
 | `description` | string | 协议描述 |  |
 | `created_date` | datetime | 创建日期 | 自动生成 |
 | `dataList`| Data数组 | 所有Data，包括经过预处理的数组|必填，内容可空|
-| `resultList`| Result数组 | 所有Result|必填，内容可空|
 | `cortex` | Cortex| 皮层模型 ||
 | `leadField` | LeadField| 引导场 ||
+| `channel`|
 
 当新建Protocol时，在Project文件夹下创建子文件夹，而非新增路径指针，该行为在大型软件工程上会因为不必要的拷贝被批斗，但是对于该项目而言，复制开销不大，为方便访问这么做问题不大。
 
@@ -36,10 +36,24 @@
 | `protocol` | string | 所属协议 | 双向绑定 |
 | `dataType` | string | 数据类型 | 考虑到未来有sim，保留 |
 | `dataName` | string | 数据文件名 | 必填 |
+| `preprocessedList`| preprocessed数组 | 所有Result|必填，内容可空|
+| `metadata` | struct | 数据元数据 | 可选 |
+
+Data很大，要存指针
+
+### Channel
+
+| 字段名 | 数据类型 | 描述 | 约束 |
+|--------|----------|------|------|
 | `channelNames` | cell | 通道名称列表 | 必填 |
 | `channelLocations` | struct | 通道位置信息 | 可选 |
+
+### PreData
+
+| 字段名 | 数据类型 | 描述 | 约束 |
+|--------|----------|------|------|
 | `eventInfo` | struct 数组 | 事件信息，填入预处理啥的 | 可选 |
-| `metadata` | struct | 数据元数据 | 可选 |
+| `result`| Result | 所有Result|必填，内容可空|
 
 ### Cortex
 | 字段名 | 数据类型 | 描述 | 约束 |
