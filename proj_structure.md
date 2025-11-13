@@ -82,11 +82,6 @@ SEAL/
 │   ├── EEGData.m                  # EEG数据
 │   ├── MEGData.m                  # MEG数据
 │   └── ResultData.m               # 结果数据
-├── config/                        # 配置管理
-│   ├── AppConfig.m                # 应用配置
-│   ├── AlgorithmConfig.m          # 算法配置
-│   ├── DisplayConfig.m            # 显示配置
-│   └── PathsConfig.m              # 路径配置
 └── utils/                         # 工具函数
     ├── validation/                # 验证工具
     ├── logging/                   # 日志工具
