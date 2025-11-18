@@ -175,7 +175,7 @@ SEAL/models/
 ```
 Projects/
 ├── Project1/
-│   ├── project_metadata.mat
+│   ├── project_info.mat
 │   ├── Protocols/
 │   │   ├── Protocol1/
 │   │   │   ├── protocol_info.mat

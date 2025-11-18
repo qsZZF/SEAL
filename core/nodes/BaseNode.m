@@ -10,13 +10,8 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
     end
     
     properties (SetAccess = public)
-        % 基本信息
-        name string {mustBeValidVariableName} = "Untitled"
-        description string = ""
-        createdDate datetime
-        modifiedDate datetime
-        path string = ""
-        
+        path string
+       
         % 树形结构关系
         parent BaseNode
         children BaseNode
@@ -32,7 +27,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         nodeInfo struct
     end
     
-    properties (Dependent)
+    properties (Dependent, SetAccess = public)
         % 依赖属性
         fullPath string
         isRoot logical
@@ -40,6 +35,11 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         depth int16
         childCount double
         hasChildren logical
+    end
+
+    properties (Abstract, Dependent, SetAccess = public)
+        % 依赖属性
+        name string
     end
     
     events
@@ -54,45 +54,43 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
     
     methods (Abstract, Access = protected)
         % 抽象方法 - 由子类实现
-        validateNode(obj)
+        % validateNode(obj)
+    end
+
+    methods (Abstract, Access = public)
         load(obj)
         unload(obj)
+        open(obj, path)
         save(obj)
     end
     
     methods
-        function obj = BaseNode(nodeName, parentNode)
+        function obj = BaseNode(parentNode)
             %BASENODE 构造函数
             % 输入:
             %   nodeName - 节点名称
             %   parentNode - 父节点
-            
-            if nargin >= 1
-                obj.name = nodeName;
-            end
             
             if nargin >= 2
                 obj.parent = parentNode;
             end
             
             % 初始化基本属性
-            obj.uuid = char(matlab.lang.internal.uuid());
-            obj.createdDate = datetime('now');
-            obj.modifiedDate = obj.createdDate;
-            obj.metadata = struct();
+            obj.uuid = '123456';
             obj.children = BaseNode.empty;
             obj.tags = string.empty;
         end
         
         %% 依赖属性的get方法
-        function path = get.fullPath(obj)
-            %GET.FULLPATH 获取节点在树中的完整路径
+        function fullPath = get.fullPath(obj)
+            %GET.FULLPATH 获取完整路径
             if obj.isRoot
-                path = obj.name;
+                fullPath = obj.name;
             else
                 parentPath = obj.parent.fullPath;
-                path = strcat(parentPath, '/', obj.name);
+                fullPath = strcat(parentPath, '/', obj.name);
             end
+            fullPath = fullfile(obj.path, fullPath);
         end
         
         function root = get.isRoot(obj)
