@@ -182,49 +182,52 @@ light('Position',[-100,0,-100]*mean(sum(vc.^2,2)));
 light('Position',[100,0,100]*mean(sum(vc.^2,2)));
 set(handles.axes, 'CameraUpVector', [0, 1, 0]);
 
-if ~isempty(SourceData)
-    
-    cdata=repmat(cortexcolor,length(SourceData),1);
-    cmin = min(CLim);cmax = max(CLim);
-    
-    tlen = size(colorMap,1);
-    
-    if cmin>=0
-        colorMap(1:floor(tlen*thresh),:) = repmat(cortexcolor,floor(tlen*thresh),1);
-    else
-        colorMap(floor(tlen*(0.5-thresh/2))+1:floor(tlen*(thresh/2+0.5)),:) = repmat(cortexcolor,(floor(tlen*(thresh/2+0.5))-floor(tlen*(0.5-thresh/2))),1);
-    end
-    
-    if isempty(hemisphere)
-        Valpha = ones(size(vc,1),1)*alphaValue;
-    else
-        tIdx = strcmp('Structures',string(struct2table(BrainModel.Atlas).Name));
-        switch hemisphere
-            
-            case 'left'
-                hemiIdx = BrainModel.Atlas(tIdx).Scouts(1).Vertices;
-                Valpha = zeros(size(vc,1),1);
-                Valpha(hemiIdx) = alphaValue;
-                roiIdx = intersect(roiIdx,hemiIdx);
-            case 'right'
-                hemiIdx = BrainModel.Atlas(tIdx).Scouts(2).Vertices;
-                Valpha = zeros(size(vc,1),1);
-                Valpha(hemiIdx) = alphaValue;
-                roiIdx = intersect(roiIdx,hemiIdx);
-        end
-    end
-    
-    s2plot = roiIdx;
-    cdata(s2plot,:)=colorMap(min(max(floor((SourceData(s2plot)-cmin)/(cmax-cmin)*(length(colorMap)-1)),0),(length(colorMap)-1))+1,:);        
+% if ~isempty(SourceData)
+%     
+%     cdata=repmat(cortexcolor,length(SourceData),1);
+%     cmin = min(CLim);cmax = max(CLim);
+%     
+%     tlen = size(colorMap,1);
+%     
+%     if cmin>=0
+%         colorMap(1:floor(tlen*thresh),:) = repmat(cortexcolor,floor(tlen*thresh),1);
+%     else
+%         colorMap(floor(tlen*(0.5-thresh/2))+1:floor(tlen*(thresh/2+0.5)),:) = repmat(cortexcolor,(floor(tlen*(thresh/2+0.5))-floor(tlen*(0.5-thresh/2))),1);
+%     end
+%     
+%     if isempty(hemisphere)
+%         Valpha = ones(size(vc,1),1)*alphaValue;
+%     else
+%         tIdx = strcmp('Structures',string(struct2table(BrainModel.Atlas).Name));
+%         switch hemisphere
+%             
+%             case 'left'
+%                 hemiIdx = BrainModel.Atlas(tIdx).Scouts(1).Vertices;
+%                 Valpha = zeros(size(vc,1),1);
+%                 Valpha(hemiIdx) = alphaValue;
+%                 roiIdx = intersect(roiIdx,hemiIdx);
+%             case 'right'
+%                 hemiIdx = BrainModel.Atlas(tIdx).Scouts(2).Vertices;
+%                 Valpha = zeros(size(vc,1),1);
+%                 Valpha(hemiIdx) = alphaValue;
+%                 roiIdx = intersect(roiIdx,hemiIdx);
+%         end
+%     end
+%     
+%     s2plot = roiIdx;
+%     cdata(s2plot,:)=colorMap(min(max(floor((SourceData(s2plot)-cmin)/(cmax-cmin)*(length(colorMap)-1)),0),(length(colorMap)-1))+1,:);        
+%     set(handles.hp,'FaceAlpha','flat','AlphaDataMapping','none',...
+%     'FaceVertexAlphaData',Valpha, ...
+%     'FaceVertexCData',cdata,...
+%     'facecolor', 'interp');
+%     caxis([cmin,cmax]);
+%     colormap(colorMap);
+% end
+[Valpha,cdata]=bulidsource(SourceData,vc);
     set(handles.hp,'FaceAlpha','flat','AlphaDataMapping','none',...
     'FaceVertexAlphaData',Valpha, ...
     'FaceVertexCData',cdata,...
     'facecolor', 'interp');
-    caxis([cmin,cmax]);
-    colormap(colorMap);
-end
-
-
 bind3DInteraction(handles.h, handles.axes);
 
 end
@@ -322,82 +325,5 @@ while size(Cbar,1)>cnum
 end
 end
 
-function bind3DInteraction(fig, ax)
-% 绑定 3D 交互：左键旋转 / 中键平移 / 滚轮缩放
-% fig: figure 或 uifigure
-% ax : axes 或 UIAxes
 
-% 关闭内置交互，避免抢事件
-try, disableDefaultInteractivity(ax); end
-zoom(fig,'off'); pan(fig,'off'); rotate3d(fig,'off');
-
-% 命中设置：点在轴或子对象上都能触发
-set(ax,'HitTest','on','PickableParts','all');
-kids = allchild(ax);
-set(kids, 'HitTest','on','PickableParts','all', ...
-    'ButtonDownFcn', @(s,e) startDrag(fig, ax, whichMode(fig)));
-
-% 在轴上按下也能触发
-set(ax,'ButtonDownFcn', @(s,e) startDrag(fig, ax, whichMode(fig)));
-
-% 全局抬起/滚轮
-set(fig,'WindowButtonUpFcn',    @(s,e) stopDrag(fig), ...
-    'WindowScrollWheelFcn', @(s,e) onScroll(ax,e));
-
-% 可选：快捷键 r 复位、l 补光
-set(fig,'KeyPressFcn',@(s,e) onKey(ax,e));
-
-    function mode = whichMode(fh)
-        % 根据鼠标键判断模式
-        % SelectionType: 'normal'(左) 'extend'(中键或Shift+左) 'alt'(右)
-        st = get(fh,'SelectionType');
-        switch st
-            case 'extend', mode = 'pan';     % 中键（或Shift+左）
-            otherwise,     mode = 'rotate';  % 默认左键旋转
-        end
-    end
-end
-
-function startDrag(fig, ax, mode)
-% 记录起点与模式，并接管移动
-setappdata(fig,'md',struct('pt',get(0,'PointerLocation'),'mode',mode));
-set(fig,'WindowButtonMotionFcn', @(s,e) doDrag(fig, ax));
-end
-
-function doDrag(fig, ax)
-md  = getappdata(fig,'md');
-pt  = get(0,'PointerLocation');
-dp  = pt - md.pt;
-md.pt = pt; setappdata(fig,'md',md);
-
-switch md.mode
-    case 'pan'    % 平移（屏幕像素到相机平移）
-        k = 1.0;  % 平移灵敏度
-        camdolly(ax, -k*dp(1), -k*dp(2), 0, 'movetarget','pixels');
-
-    otherwise     % 旋转
-        camorbit(ax, -dp(1)*0.2, -dp(2)*0.2, 'camera');
-end
-drawnow limitrate
-end
-
-function stopDrag(fig)
-set(fig,'WindowButtonMotionFcn',[]);
-rmappdata(fig,'md');
-end
-
-function onScroll(ax,e)
-% 滚轮缩放：向上放大，向下缩小
-camzoom(ax, 1 - 0.1*sign(e.VerticalScrollCount));
-drawnow limitrate
-end
-
-function onKey(ax,e)
-switch lower(e.Key)
-    case 'r'
-        axis(ax,'vis3d'); view(ax,[-90 90]); camlookat(ax);
-    case 'l'
-        camlight(ax,'headlight','infinite');
-end
-end
 

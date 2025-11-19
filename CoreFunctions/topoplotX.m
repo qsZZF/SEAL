@@ -39,7 +39,7 @@ if nargs > 2
     end
 end
 
-isEmptyValues = isempty(Values);  %% ==== CHANGED: 记录是否为空，进入仅标注模式
+isEmptyValues = isempty(Values); 
 if ~isEmptyValues
     Values = Values(:); % make Values a column vector
 end
@@ -71,13 +71,13 @@ Th          = Th(plotchans);
 Rd          = Rd(plotchans);
 x           = x(plotchans);
 y           = y(plotchans);
-labels_char = char(labels(plotchans)); % 仅用于 numbers 分支
+labels_char = char(labels(plotchans));
 if ~isEmptyValues
     Values      = Values(plotchans);
 end
 intrad      = min(1.0,max(Rd)*1.02);   % default: just outside the outermost electrode location
 
-%% Find plotting channels（头内通道）
+%% Find plotting channels
 pltchans = find(Rd <= plotrad); % plot channels inside plotting circle
 
 %% Squeeze channel locations to <= headrad
@@ -86,23 +86,22 @@ Rd    = Rd*squeezefac;      % squeeze electrode arc_lengths towards the vertex
 x     = x*squeezefac;
 y     = y*squeezefac;
 
-%% ==== CHANGED: Values 为空 → 仅绘制头型 + 电极点 + 标签，直接返回
 if isEmptyValues
     h = ax2plot; cla(h); hold(h,'on');
-    % 头部外圈
+
     AXHEADFAC = 1.05;
     set(h,'Xlim',[-headrad headrad]*AXHEADFAC,'Ylim',[-headrad headrad]*AXHEADFAC);
     circ = linspace(0,2*pi,CIRCGRID);
     rx = sin(circ); ry = cos(circ);
 
-    % 头圈
+
     hwidth = HEADRINGWIDTH;
     hin  = headrad*(1- hwidth/2);
     headx = [[rx(:)' rx(1) ]*(hin+hwidth)  [rx(:)' rx(1)]*hin];
     heady = [[ry(:)' ry(1) ]*(hin+hwidth)  [ry(:)' ry(1)]*hin];
     patch(h,headx,heady,ones(size(headx)),HEADCOLOR,'edgecolor',HEADCOLOR,'hittest','off');
 
-    % 耳朵 & 鼻子（沿用原比例）
+
     base  = headrad-.0046;
     basex = 0.18*headrad;   % nose width
     tip   = 1.15*headrad;
@@ -111,29 +110,25 @@ if isEmptyValues
     q = .04;                % ear lengthening
     EarX  = [.497-.005  .510  .518  .5299 .5419  .54    .547   .532   .510   .489-.005]; % headrad = 0.5
     EarY  = [q+.0555 q+.0775 q+.0783 q+.0746 q+.0555 -.0055 -.0932 -.1313 -.1384 -.1199];
-    sf    = headrad/plotrad;  % 与原实现一致
+    sf    = headrad/plotrad;  
 
     plot3(h,[basex;tiphw;0;-tiphw;-basex]*sf,[base;tip-tipr;tip;tip-tipr;base]*sf, ...
           2*ones(5,1),'Color',HEADCOLOR,'LineWidth',HLINEWIDTH,'hittest','off');                 % nose
     plot3(h,EarX*sf,EarY*sf,2*ones(size(EarX)),'color',HEADCOLOR,'LineWidth',HLINEWIDTH,'hittest','off')    % left ear
     plot3(h,-EarX*sf,EarY*sf,2*ones(size(EarY)),'color',HEADCOLOR,'LineWidth',HLINEWIDTH,'hittest','off')   % right ear
 
-    % 仅绘制头内通道
     x_in = x(pltchans); y_in = y(pltchans);
-    % 强制显示标签
+
     plot3(h, y_in, x_in, ones(size(x_in)), '.', 'Color', [0 0 0], 'markersize', 5, 'linewidth', .5, 'hittest','off');
     text(h, double(y_in), double(x_in), {chanlocs(plotchans(pltchans)).labels}, ...
         'HorizontalAlignment','center','VerticalAlignment','middle','Color',[0 0 0],'hittest','off');
 
     epos   = [x_in; y_in];
-    handle = [];              % 没有 surface 热图
+    handle = [];            
     axis(h,'equal'); axis(h,'off');
     return;
 end
-%% ==== CHANGED 结束（以下为原有的插值/着色路径） ====
-
-%% 插值用通道（建议：可将条件改为 abs(x)<=intrad & abs(y)<=intrad 或半径内）
-intchans = find(x <= intrad & y <= intrad); % 原代码逻辑保持
+intchans = find(x <= intrad & y <= intrad); 
 
 allx  = x; ally  = y;
 allchansind = allchansind(pltchans);
