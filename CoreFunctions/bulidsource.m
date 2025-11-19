@@ -12,20 +12,16 @@ if ~isempty(SourceData)
     end
     thresh = otsu(abs(SourceData)/max(abs(SourceData)));
     CLim = CLim*max(abs(SourceData));
-end
-cmin = min(CLim);cmax = max(CLim);
 
-tlen = size(colorMap,1);
+    cmin = min(CLim);cmax = max(CLim);
 
-if cmin>=0
-    colorMap(1:floor(tlen*thresh),:) = repmat(cortexcolor,floor(tlen*thresh),1);
-else
-    colorMap(floor(tlen*(0.5-thresh/2))+1:floor(tlen*(thresh/2+0.5)),:) = repmat(cortexcolor,(floor(tlen*(thresh/2+0.5))-floor(tlen*(0.5-thresh/2))),1);
-end
+    tlen = size(colorMap,1);
 
-
-    Valpha = ones(size(vc,1),1)*alphaValue;
-
+    if cmin>=0
+        colorMap(1:floor(tlen*thresh),:) = repmat(cortexcolor,floor(tlen*thresh),1);
+    else
+        colorMap(floor(tlen*(0.5-thresh/2))+1:floor(tlen*(thresh/2+0.5)),:) = repmat(cortexcolor,(floor(tlen*(thresh/2+0.5))-floor(tlen*(0.5-thresh/2))),1);
+    end
 
 
 s2plot = roiIdx;
@@ -33,6 +29,8 @@ cdata(s2plot,:)=colorMap(min(max(floor((SourceData(s2plot)-cmin)/(cmax-cmin)*(le
 
 caxis([cmin,cmax]);
 colormap(colorMap);
+end
+Valpha = ones(size(vc,1),1)*alphaValue;
 
 end
 

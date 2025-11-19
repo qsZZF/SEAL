@@ -182,109 +182,18 @@ light('Position',[-100,0,-100]*mean(sum(vc.^2,2)));
 light('Position',[100,0,100]*mean(sum(vc.^2,2)));
 set(handles.axes, 'CameraUpVector', [0, 1, 0]);
 
-% if ~isempty(SourceData)
-%     
-%     cdata=repmat(cortexcolor,length(SourceData),1);
-%     cmin = min(CLim);cmax = max(CLim);
-%     
-%     tlen = size(colorMap,1);
-%     
-%     if cmin>=0
-%         colorMap(1:floor(tlen*thresh),:) = repmat(cortexcolor,floor(tlen*thresh),1);
-%     else
-%         colorMap(floor(tlen*(0.5-thresh/2))+1:floor(tlen*(thresh/2+0.5)),:) = repmat(cortexcolor,(floor(tlen*(thresh/2+0.5))-floor(tlen*(0.5-thresh/2))),1);
-%     end
-%     
-%     if isempty(hemisphere)
-%         Valpha = ones(size(vc,1),1)*alphaValue;
-%     else
-%         tIdx = strcmp('Structures',string(struct2table(BrainModel.Atlas).Name));
-%         switch hemisphere
-%             
-%             case 'left'
-%                 hemiIdx = BrainModel.Atlas(tIdx).Scouts(1).Vertices;
-%                 Valpha = zeros(size(vc,1),1);
-%                 Valpha(hemiIdx) = alphaValue;
-%                 roiIdx = intersect(roiIdx,hemiIdx);
-%             case 'right'
-%                 hemiIdx = BrainModel.Atlas(tIdx).Scouts(2).Vertices;
-%                 Valpha = zeros(size(vc,1),1);
-%                 Valpha(hemiIdx) = alphaValue;
-%                 roiIdx = intersect(roiIdx,hemiIdx);
-%         end
-%     end
-%     
-%     s2plot = roiIdx;
-%     cdata(s2plot,:)=colorMap(min(max(floor((SourceData(s2plot)-cmin)/(cmax-cmin)*(length(colorMap)-1)),0),(length(colorMap)-1))+1,:);        
-%     set(handles.hp,'FaceAlpha','flat','AlphaDataMapping','none',...
-%     'FaceVertexAlphaData',Valpha, ...
-%     'FaceVertexCData',cdata,...
-%     'facecolor', 'interp');
-%     caxis([cmin,cmax]);
-%     colormap(colorMap);
-% end
-[Valpha,cdata]=bulidsource(SourceData,vc);
+if ~isempty(SourceData)
+    [Valpha,cdata]=bulidsource(SourceData,vc);
     set(handles.hp,'FaceAlpha','flat','AlphaDataMapping','none',...
-    'FaceVertexAlphaData',Valpha, ...
-    'FaceVertexCData',cdata,...
-    'facecolor', 'interp');
+        'FaceVertexAlphaData',Valpha, ...
+        'FaceVertexCData',cdata,...
+        'facecolor', 'interp');
+end
+
 bind3DInteraction(handles.h, handles.axes);
 
 end
-function saveAndShowViews(handles, vc, tri, cortexcolor)
-   % 定义视图名称和对应的视角
-    viewNames = {'Front', 'Side', 'Top'};
-    viewAngles = [0, 90;   % 正视图 (X-Y平面)
-                 90, 0;   % 侧视图 (Y-Z平面)
-                 0, 0];   % 俯视图 (X-Z平面)
-    
-    % 保存原始视图设置
-    originalView = handles.axes.View;
-    originalCameraPosition = handles.axes.CameraPosition;
-    originalCameraUpVector = handles.axes.CameraUpVector;
-    originalCameraTarget = handles.axes.CameraTarget;
-    originalCameraViewAngle = handles.axes.CameraViewAngle;
-    
-    % 创建并保存每个2D视图
-    for i = 1:3
-        % 临时改变视图角度
-        view(handles.axes, viewAngles(i, :));
-        
-        % 确保视图更新
-        drawnow;
-    % 创建新图形窗口
-        fig = figure('Name', viewNames{i}, 'Color', [0 0 0]);
-        
-        % 复制原始坐标轴到新窗口
-        newAx = copyobj(handles.axes, fig);
-        set(newAx, 'Position', [0 0 1 1]); % 使坐标轴充满整个窗口
-        
-        % 设置新窗口的视图角度（与主窗口当前视图一致）
-        view(newAx, viewAngles(i, :));
-        
-        % 设置相同的轴限制和属性
-        axis(newAx, 'equal', 'tight');
-        axlim = [min(vc); max(vc)] * 1.2;
-        axis(newAx, reshape(axlim, 1, []));
-        set(newAx, 'Xcolor', [0 0 0], 'ycolor', [0 0 0], 'zcolor', [0 0 0]);
-        
-%         % 添加光源（复制原始设置）
-%         light('Parent', newAx, 'Position', [-100, 0, -100] * mean(sum(vc.^2, 2)));
-%         light('Parent', newAx, 'Position', [100, 0, 100] * mean(sum(vc.^2, 2)));
-%         
-    end
-    
-    % 恢复原始视图设置
-    view(handles.axes, originalView);
-    handles.axes.CameraPosition = originalCameraPosition;
-    handles.axes.CameraUpVector = originalCameraUpVector;
-    handles.axes.CameraTarget = originalCameraTarget;
-    handles.axes.CameraViewAngle = originalCameraViewAngle;
-end
 
-function move_light_source(src,evt,LightSource)
-LightSource = camlight(LightSource,'infinite');
-end
 
 function cbars = CBar(type)
 if nargin<1
