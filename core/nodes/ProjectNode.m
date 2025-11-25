@@ -25,18 +25,25 @@ classdef ProjectNode < BaseNode
             obj = obj@BaseNode([]);
             obj.path = projectPath;
         end
-        
+
         function open(obj, projectPath)
             if(obj.isLoaded)
                 return;
             end
             
             try
-%                 fprintf('Loading: %s\n', obj.name);
+                % 检查输入路径是文件还是文件夹
+                if isfile(projectPath)
+                    % 如果是文件路径，提取文件夹路径
+                    [projectPath, ~, ~] = fileparts(projectPath);
+                    projectFile = projectPath;
+                else
+                    % 如果是文件夹路径
+                    [~, projectName, ~] = fileparts(projectPath);
+                    projectFile = fullfile(projectPath, strcat(projectName, '.mat'));
+                end
                 
                 % 检查项目文件是否存在
-                [~, name, ~] = fileparts(projectPath);
-                projectFile = fullfile(projectPath, strcat(name, '.mat'));
                 if ~isfile(projectFile)
                     warning('SEAL:ProjectNode:ProjectFileNotFound', ...
                         'No such project exists: %s', projectFile);
@@ -47,13 +54,11 @@ classdef ProjectNode < BaseNode
                 obj.path = projectPath;
                 obj.projectInfo = ProjectInfo.openExisting(projectFile);
                 
+                % 加载Protocol
+                obj.loadAllProtocols();
+                
                 % 标记为已加载
                 obj.isLoaded = true;
-                
-%                 % 触发加载事件
-%                 obj.notify('NodeLoaded', NodeEventData(obj));
-                
-%                 fprintf('Open successfully: %s\n', obj.name);
                 
             catch ME
                 error('SEAL:ProjectNode:LoadFailed', ...
@@ -66,7 +71,7 @@ classdef ProjectNode < BaseNode
 %             fprintf('Saving: %s\n', obj.name);
 
             obj.createDirectoryStructure();
-            obj.projectInfo.save(obj.fullPath);
+            obj.projectInfo.save(obj.path);
             
             % 递归保存所有子节点
             for i = 1:obj.childCount
@@ -145,11 +150,14 @@ classdef ProjectNode < BaseNode
             
             if isfolder(projectPath)
                 % 如果是文件夹，查找项目文件
-                projectFiles = dir(fullfile(projectPath, '*.mat'));
+                [~, projectName, ~] = fileparts(projectPath);
+                projectFiles = dir(fullfile(projectPath, strcat(projectName, '.mat')));
                 if isempty(projectFiles)
                     error('SEAL:ProjectNode:NoProjectFile', ...
                         'No such project in path: %s', projectPath);
                 end
+            else
+                 [projectPath, ~, ~] = fileparts(projectPath);
             end
             
             % 创建项目节点
@@ -174,7 +182,7 @@ classdef ProjectNode < BaseNode
             parse(p, projectName, projectPath, varargin{:});
             
             % 创建项目节点
-            project = ProjectNode(projectPath);
+            project = ProjectNode(fullfile(projectPath, projectName));
             project.projectInfo = ProjectInfo.createNew(p.Results.projectName, ...
                 p.Results.Description);
             
@@ -193,14 +201,53 @@ classdef ProjectNode < BaseNode
             end
             
             % 创建主目录
-            if ~isfolder(obj.fullPath)
-                mkdir(obj.fullPath);
+            if ~isfolder(obj.path)
+                mkdir(obj.path);
             end
             
             % 创建协议目录
-            protocolsPath = fullfile(obj.fullPath, 'Protocols');
+            protocolsPath = fullfile(obj.path, 'Protocols');
             if ~isfolder(protocolsPath)
                 mkdir(protocolsPath);
+            end
+        end
+
+        function loadAllProtocols(obj)
+            %LOADALLPROTOCOLS 加载项目中的所有协议
+            
+            protocolsPath = fullfile(obj.path, 'Protocols');
+            
+            % 检查协议目录是否存在
+            if ~isfolder(protocolsPath)
+                return;
+            end
+            
+            % 获取所有协议目录
+            protocolDirs = dir(protocolsPath);
+            
+            for i = 1:length(protocolDirs)
+                protocolDir = protocolDirs(i);
+                
+                % 跳过 . 和 .. 目录以及非目录项
+                if protocolDir.isdir && ~startsWith(protocolDir.name, '.')
+                    protocolPath = fullfile(protocolsPath, protocolDir.name);
+                    
+                    try
+                        % 检查是否存在协议文件
+                        protocolFile = fullfile(protocolPath, strcat(protocolDir.name, '.mat'));
+                        if isfile(protocolFile)
+                            % 创建并加载协议节点
+                            protocolNode = ProtocolNode(protocolPath);
+                            protocolNode.open(protocolPath);
+                            
+                            % 添加到项目
+                            obj.addChild(protocolNode);
+                        end
+                    catch ME
+                        warning('SEAL:ProjectNode:ProtocolLoadFailed', ...
+                            'Failed to open %s: %s', protocolDir.name, ME.message);
+                    end
+                end
             end
         end
     end
