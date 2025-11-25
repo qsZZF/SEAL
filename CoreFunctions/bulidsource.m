@@ -1,5 +1,9 @@
-function [Valpha,cdata]=bulidsource(SourceData,vc)
+function [Valpha,cdata]=bulidsource(SourceData,vc,rgb)
+if ~isempty(rgb)
+cortexcolor=rgb;
+else
 cortexcolor=[0.85 0.85 0.85];
+end
 cdata=repmat(cortexcolor,length(SourceData),1);
 roiIdx = 1:length(vc);
 CLim = [0,1];
