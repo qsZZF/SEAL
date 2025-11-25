@@ -11,7 +11,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
     
     properties (SetAccess = public)
         path string
-       
+
         % 树形结构关系
         parent BaseNode
         children BaseNode
@@ -29,7 +29,6 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
     
     properties (Dependent, SetAccess = public)
         % 依赖属性
-        fullPath string
         isRoot logical
         isLeaf logical
         depth int16
@@ -76,22 +75,11 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             end
             
             % 初始化基本属性
-            obj.uuid = '123456';
+            obj.uuid = string(matlab.lang.internal.uuid());
             obj.children = BaseNode.empty;
             obj.tags = string.empty;
         end
         
-        %% 依赖属性的get方法
-        function fullPath = get.fullPath(obj)
-            %GET.FULLPATH 获取完整路径
-            if obj.isRoot
-                fullPath = obj.name;
-            else
-                parentPath = obj.parent.fullPath;
-                fullPath = strcat(parentPath, '/', obj.name);
-            end
-            fullPath = fullfile(obj.path, fullPath);
-        end
         
         function root = get.isRoot(obj)
             %GET.ISROOT 判断是否为根节点
@@ -130,10 +118,9 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             
             validateattributes(childNode, {'BaseNode'}, {'scalar'});
             
-            % 检查名称唯一性
-            if any([obj.children.name] == childNode.name)
-                error('SEAL:BaseNode:DuplicateChild', ...
-                    'Child node named "%s" exists', childNode.name);
+            % 检查唯一性
+            if isSubNode(childNode)
+                return
             end
             
             % 设置父子关系
@@ -146,9 +133,9 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
                 obj.children(end+1) = childNode;
             end
             
-            % 触发事件
-            obj.notify('NodeAdded', NodeEventData(childNode));
-            obj.updateModifiedDate();
+%             % 触发事件
+%             obj.notify('NodeAdded', NodeEventData(childNode));
+%             obj.updateModifiedDate();
         end
         
         function removeChild(obj, childNode)
@@ -163,10 +150,8 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             validateattributes(childNode, {'BaseNode'}, {'scalar'});
             
             % 检查是否为直接子节点
-            if ~any(obj.children == childNode)
-                error('SEAL:BaseNode:NotAChild', ...
-                    '"%s" is not a direct descendant of "%s"', ...
-                    childNode.name, obj.name);
+            if ~isSubNode(childNode)
+                return
             end
             
             % 移除父子关系
@@ -320,6 +305,17 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         function updateModifiedDate(obj)
             %UPDATEMODIFIEDDATE 更新修改时间
             obj.modifiedDate = datetime('now');
+        end
+
+        function res = isSubNode(obj, other)
+            if ~isempty(obj.children)
+                childIds = arrayfun(@(x) string(x.name), obj.children);
+                if any(strcmp(childIds, string(other.uuid)))
+                    res = true;
+                    return
+                end
+            end
+            res = false;
         end
     end
 end

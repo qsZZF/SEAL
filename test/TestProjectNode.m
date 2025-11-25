@@ -10,7 +10,7 @@ classdef TestProjectNode < matlab.unittest.TestCase
     methods (TestMethodSetup)
         function setup(testCase)
             % 设置测试环境
-            testCase.testProjectPath = fullfile(tempdir, 'SEAL_Test_Projects');
+            testCase.testProjectPath = fullfile(tempdir, "SEAL", 'SEAL_Test_Projects');
 
             % 确保测试目录存在
             if ~isfolder(testCase.testProjectPath)
@@ -24,13 +24,30 @@ classdef TestProjectNode < matlab.unittest.TestCase
     methods (TestMethodTeardown)
         function teardown(testCase)
             % 清理测试环境
+            
+            % 删除项目节点
             if ~isempty(testCase.projectNode) && isvalid(testCase.projectNode)
                 delete(testCase.projectNode);
             end
             
-            % 删除测试项目文件
-            if isfolder(fullfile(testCase.testProjectPath, testCase.testProjectName))
-                rmdir(fullfile(testCase.testProjectPath, testCase.testProjectName), 's');
+            % 使用更彻底的清理方法
+            testCase.cleanupDirectory(testCase.testProjectPath);
+        end
+    end
+
+    methods (Access = private)
+        function cleanupDirectory(testCase, dirPath)
+            %CLEANUPDIRECTORY 清理指定目录及其所有内容
+            if ~isfolder(dirPath)
+                return;
+            end
+            
+            try
+                % 删除目录及其所有内容
+                rmdir(dirPath, 's');
+            catch ME
+                % 如果目录删除失败，尝试逐个删除子项
+                testCase.cleanupDirectoryContents(dirPath);
             end
         end
     end
@@ -83,37 +100,6 @@ classdef TestProjectNode < matlab.unittest.TestCase
             fprintf('✓ 加载项目测试通过\n');
         end
         
-%         function testAddProtocol(testCase)
-%             % 测试添加协议
-%             
-%             fprintf('\n=== 测试添加协议 ===\n');
-%             
-%             % 创建项目
-%             testCase.projectNode = TestProjectNode.createNewProject(...
-%                 testCase.testProjectName, ...
-%                 testCase.testProjectPath);
-%             
-%             % 创建协议节点（需要ProtocolNode类存在）
-%             try
-%                 % 这里假设ProtocolNode类存在
-%                 protocol = ProtocolNode('TestProtocol');
-%                 testCase.projectNode.addChild(protocol);
-%                 
-%                 % 验证协议数量
-%                 testCase.verifyEqual(testCase.projectNode.protocolCount, 1);
-%                 testCase.verifyEqual(testCase.projectNode.childCount, 1);
-%                 
-%                 fprintf('✓ 添加协议测试通过\n');
-%                 
-%             catch ME
-%                 if strcmp(ME.identifier, 'MATLAB:undefinedVarOrClass')
-%                     fprintf('⚠  ProtocolNode类未定义，跳过协议添加测试\n');
-%                 else
-%                     rethrow(ME);
-%                 end
-%             end
-%         end
-%         
         function testSaveProject(testCase)
             % 测试保存项目
             
@@ -208,9 +194,9 @@ classdef TestProjectNode < matlab.unittest.TestCase
             fprintf('跳过: %d\n', nnz([results.Incomplete]));
             
             if all([results.Passed])
-                fprintf('\n 所有测试通过！\n');
+                fprintf('\n所有测试通过！\n');
             else
-                fprintf('\n❌ 有测试失败，请检查代码\n');
+                fprintf('\n测试失败\n');
             end
         end
     end
