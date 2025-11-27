@@ -20,7 +20,7 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             end
             
             % 创建测试项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
         end
@@ -63,10 +63,11 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             
             fprintf('\n=== 测试创建新协议 ===\n');
             
+            project = testCase.projectNode;
+
             % 创建新协议
-            testCase.protocolNode = ProtocolNode.createNewProtocol(...
+            testCase.protocolNode = project.createNewProtocol(...
                 testCase.testProtocolName, ...
-                testCase.projectNode, ...
                 'Type', 'EEG', ...
                 'Description', '这是一个测试协议');
             
@@ -91,17 +92,18 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             % 测试加载协议
             
             fprintf('\n=== 测试加载协议 ===\n');
+
+
             
             % 先创建协议
-            testCase.protocolNode = ProtocolNode.createNewProtocol(...
-                testCase.testProtocolName, ...
-                testCase.projectNode);
+            testCase.protocolNode = testCase.projectNode.createNewProtocol(...
+                testCase.testProtocolName);
             
             % 获取协议路径
             protocolPath = fullfile(testCase.projectNode.path, 'Protocols', testCase.testProtocolName);
             
             % 然后加载协议
-            loadedProtocol = ProtocolNode.openProtocol(protocolPath, testCase.projectNode);
+            loadedProtocol = testCase.projectNode.openProtocol(protocolPath);
             
             % 验证加载的协议属性
             testCase.verifyEqual(loadedProtocol.name, string(testCase.testProtocolName));
@@ -122,9 +124,8 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             fprintf('\n=== 测试保存协议 ===\n');
             
             % 创建协议
-            testCase.protocolNode = ProtocolNode.createNewProtocol(...
-                testCase.testProtocolName, ...
-                testCase.projectNode);
+            testCase.protocolNode = testCase.projectNode.createNewProtocol(...
+                testCase.testProtocolName);
             
             % 修改协议信息
             testCase.protocolNode.protocolInfo.desc = "修改后的协议描述";
@@ -135,7 +136,7 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             
             % 重新加载验证修改是否保存
             protocolPath = fullfile(testCase.projectNode.path, 'Protocols', testCase.testProtocolName);
-            reloadedProtocol = ProtocolNode.openProtocol(protocolPath, testCase.projectNode);
+            reloadedProtocol = ProtocolNode.openExisting(protocolPath);
             
             testCase.verifyEqual(reloadedProtocol.protocolInfo.desc, "修改后的协议描述");
             testCase.verifyEqual(reloadedProtocol.protocolInfo.type, "MEG");
@@ -152,9 +153,8 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             fprintf('\n=== 测试卸载协议 ===\n');
             
             % 创建并加载协议
-            testCase.protocolNode = ProtocolNode.createNewProtocol(...
-                testCase.testProtocolName, ...
-                testCase.projectNode);
+            testCase.protocolNode = testCase.projectNode.createNewProtocol(...
+                testCase.testProtocolName);
 
             % 验证协议已加载
             testCase.verifyTrue(testCase.protocolNode.isLoaded);
@@ -172,11 +172,12 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             % 测试协议属性
             
             fprintf('\n=== 测试协议属性 ===\n');
+
+            project = testCase.projectNode;
             
             % 创建协议
-            testCase.protocolNode = ProtocolNode.createNewProtocol(...
+            testCase.protocolNode = project.createNewProtocol(...
                 testCase.testProtocolName, ...
-                testCase.projectNode, ...
                 'Type', 'EEG', ...
                 'Description', '属性测试协议');
             
@@ -201,9 +202,8 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             fprintf('\n=== 测试项目与协议的关系 ===\n');
             
             % 创建协议
-            testCase.protocolNode = ProtocolNode.createNewProtocol(...
-                testCase.testProtocolName, ...
-                testCase.projectNode);
+            testCase.protocolNode = testCase.projectNode.createNewProtocol(...
+                testCase.testProtocolName);
             
             % 验证父子关系
             testCase.verifyEqual(testCase.protocolNode.parent, testCase.projectNode);
@@ -227,9 +227,10 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             fprintf('\n=== 测试多个协议 ===\n');
             
             % 创建多个协议
-            protocol1 = ProtocolNode.createNewProtocol("Protocol1", testCase.projectNode);
-            protocol2 = ProtocolNode.createNewProtocol("Protocol2", testCase.projectNode);
-            protocol3 = ProtocolNode.createNewProtocol("Protocol3", testCase.projectNode);
+            project = testCase.projectNode;
+            protocol1 = project.createNewProtocol("Protocol1");
+            protocol2 = project.createNewProtocol("Protocol2");
+            protocol3 = project.createNewProtocol("Protocol3");
             
             % 验证项目中的协议数量
             testCase.verifyEqual(testCase.projectNode.protocolCount, 3);
@@ -256,9 +257,8 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             fprintf('\n=== 测试协议目录结构 ===\n');
             
             % 创建协议
-            testCase.protocolNode = ProtocolNode.createNewProtocol(...
-                testCase.testProtocolName, ...
-                testCase.projectNode);
+            testCase.protocolNode = testCase.projectNode.createNewProtocol(...
+                testCase.testProtocolName);
             
             % 验证目录结构
             protocolDir = fullfile(testCase.projectNode.path, 'Protocols', testCase.testProtocolName);
@@ -282,19 +282,19 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             fprintf('\n=== 集成测试：项目与协议的完整工作流程 ===\n');
             
             % 1. 创建项目
-            project = ProjectNode.createNewProject(...
+            project = ProjectNode.createNew(...
                 "IntegrationTestProject", ...
                 testCase.testProjectPath, ...
                 'desc', '集成测试项目');
             
             % 2. 创建多个协议
-            protocolEEG = ProtocolNode.createNewProtocol(...
-                "EEG_Protocol", project, ...
+            protocolEEG = project.createNewProtocol(...
+                "EEG_Protocol", ...
                 'Type', 'EEG', ...
                 'Description', 'EEG数据协议');
             
-            protocolMEG = ProtocolNode.createNewProtocol(...
-                "MEG_Protocol", project, ...
+            protocolMEG = project.createNewProtocol(...
+                "MEG_Protocol", ...
                 'Type', 'MEG', ...
                 'Description', 'MEG数据协议');
             
@@ -313,7 +313,7 @@ classdef TestProtocolNode < matlab.unittest.TestCase
             
             % 6. 重新加载项目
             projectPath = fullfile(testCase.testProjectPath, "IntegrationTestProject");
-            reloadedProject = ProjectNode.openProject(projectPath);
+            reloadedProject = ProjectNode.openExisting(projectPath);
             
             % 7. 验证重新加载的项目
             testCase.verifyEqual(reloadedProject.protocolCount, 2);

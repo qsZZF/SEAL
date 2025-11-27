@@ -18,12 +18,11 @@ classdef ProjectNode < BaseNode
     end
     
     methods
-        function obj = ProjectNode(projectPath)
+        function obj = ProjectNode()
             %PROJECTNODE 构造函数
             
             % 调用父类构造函数
             obj = obj@BaseNode([]);
-            obj.path = projectPath;
         end
 
         function open(obj, projectPath)
@@ -130,7 +129,6 @@ classdef ProjectNode < BaseNode
             
             % 调用父类方法
             addChild@BaseNode(obj, childNode);
-            
         end
         
         function removeChild(obj, childNode)
@@ -140,11 +138,27 @@ classdef ProjectNode < BaseNode
             removeChild@BaseNode(obj, childNode);
             
         end
+
+        function protocol = createNewProtocol(obj, protocolName, varargin)
+            protocolPath = fullfile(obj.path, "Protocols");
+            protocol = ProtocolNode.createNew(protocolName, protocolPath, varargin{:});
+            obj.addChild(protocol);
+        end
+
+        function protocol = openProtocol(obj, protocolPath)
+            protocol = ProtocolNode.openExisting(protocolPath);
+            % ProtocolInfo 相对轻量，且导入的Protocol不应该远程修改原始信息
+            % 故此处强行设置当前project的path而非使用原始path
+            % 在save时等价于自动复制并保存
+            [~,protocolName,~] = fileparts(protocolPath);
+            protocol.path = fullfile(obj.path, "Protocols", protocolName);
+            obj.addChild(protocol);
+        end
     end
 
     methods (Static)
-        function project = openProject(projectPath)
-            %OPENPROJECT 打开现有项目
+        function project = openExisting(projectPath)
+            %OPENPEXISTING 打开现有项目
             % 输入:
             %   projectPath - 项目文件路径或项目文件夹路径
             
@@ -161,14 +175,15 @@ classdef ProjectNode < BaseNode
             end
             
             % 创建项目节点
-            project = ProjectNode(projectPath);
+            project = ProjectNode();
+            project.path = projectPath;
             
             % 加载项目数据
             project.open(project.path);
         end
         
-        function project = createNewProject(projectName, projectPath, varargin)
-            %CREATENEWPROJECT 创建新项目
+        function project = createNew(projectName, projectPath, varargin)
+            %CREATENEW 创建新项目
             % 输入:
             %   projectName - 项目名称
             %   projectPath - 项目存储路径
@@ -182,7 +197,8 @@ classdef ProjectNode < BaseNode
             parse(p, projectName, projectPath, varargin{:});
             
             % 创建项目节点
-            project = ProjectNode(fullfile(projectPath, projectName));
+            project = ProjectNode();
+            project.path = fullfile(projectPath, projectName);
             project.projectInfo = ProjectInfo.createNew(p.Results.projectName, ...
                 p.Results.Description);
             
@@ -237,9 +253,9 @@ classdef ProjectNode < BaseNode
                         protocolFile = fullfile(protocolPath, strcat(protocolDir.name, '.mat'));
                         if isfile(protocolFile)
                             % 创建并加载协议节点
-                            protocolNode = ProtocolNode(protocolPath);
-                            protocolNode.open(protocolPath);
-                            
+                            tgtPath = fullfile(obj.path, "Protocols", protocolDir.name);
+                            protocolNode = ProtocolNode.openExisting(protocolPath);
+                            protocolNode.path = tgtPath;
                             % 添加到项目
                             obj.addChild(protocolNode);
                         end

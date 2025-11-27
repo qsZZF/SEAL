@@ -9,6 +9,9 @@ classdef ProtocolNode < BaseNode
     properties
         % 协议特定属性
         protocolInfo ProtocolInfo
+        channelNode ChannelNode           % 通道节点
+%         cortexNode CortexNode             % 皮层节点
+%         leadfieldNode LeadfieldNode       % 导联场节点
     end
     
     properties (Dependent)
@@ -17,18 +20,14 @@ classdef ProtocolNode < BaseNode
         protocolType string
         desc string
         sessionCount int32                 % 会话数量
-        channelNode ChannelNode           % 通道节点
-        cortexNode CortexNode             % 皮层节点
-        leadfieldNode LeadfieldNode       % 导联场节点
     end
     
     methods
-        function obj = ProtocolNode(protocolPath)
+        function obj = ProtocolNode()
             %PROTOCOLNODE 构造函数
             
             % 调用父类构造函数
             obj = obj@BaseNode();
-            obj.path = protocolPath;
         end
         
         function open(obj, protocolPath)
@@ -126,32 +125,36 @@ classdef ProtocolNode < BaseNode
         function setChannelNode(obj, channelNode)
             %SETCHANNELNODE 设置通道节点
             % 移除现有的通道节点
-            existingChannel = obj.channelNode;
-            if ~isempty(existingChannel)
-                obj.removeChild(existingChannel);
-            end
-            obj.addChild(channelNode);
+            clear(obj.channelNode);
+            obj.channelNode = channelNode;
+            channelNode.parent = obj;
         end
         
         function setCortexNode(obj, cortexNode)
             %SETCORTEXNODE 设置皮层节点
             % 移除现有的皮层节点
-            existingCortex = obj.cortexNode;
-            if ~isempty(existingCortex)
-                obj.removeChild(existingCortex);
-            end
-            obj.addChild(cortexNode);
+            clear(obj.cortexNode);
+            obj.cortexNode = cortexNode;
+            cortexNode.parent = obj;
         end
         
         function setLeadfieldNode(obj, leadfieldNode)
             %SETLEADFIELDNODE 设置导联场节点
             % 移除现有的导联场节点
-            existingLeadfield = obj.leadfieldNode;
-            if ~isempty(existingLeadfield)
-                obj.removeChild(existingLeadfield);
-            end
-            obj.addChild(leadfieldNode);
+            clear(obj.leadfieldNode);
+            obj.leadfieldNode = leadfieldNode;
+            leadfieldNode.parent = obj;
         end
+
+%         function node = openChannel(obj, channelPath)
+%             node = ChannelNode.openExisting(channelPath);
+%             % ProtocolInfo 相对轻量，且导入的Protocol不应该远程修改原始信息
+%             % 故此处强行设置当前project的path而非使用原始path
+%             % 在save时等价于自动复制并保存
+%             node.path = channelPath;
+%             obj.protocolInfo.channelPath = channelPath;
+%             obj.addChild(node);
+%         end
         
         %% 依赖属性get方法
         function count = get.sessionCount(obj)
@@ -160,39 +163,6 @@ classdef ProtocolNode < BaseNode
             for i = 1:obj.childCount
                 if isa(obj.children(i), 'SessionNode')
                     count = count + 1;
-                end
-            end
-        end
-        
-        function channel = get.channelNode(obj)
-            % 获取通道节点
-            channel = [];
-            for i = 1:obj.childCount
-                if isa(obj.children(i), 'ChannelNode')
-                    channel = obj.children(i);
-                    return;
-                end
-            end
-        end
-        
-        function cortex = get.cortexNode(obj)
-            % 获取皮层节点
-            cortex = [];
-            for i = 1:obj.childCount
-                if isa(obj.children(i), 'CortexNode')
-                    cortex = obj.children(i);
-                    return;
-                end
-            end
-        end
-        
-        function leadfield = get.leadfieldNode(obj)
-            % 获取导联场节点
-            leadfield = [];
-            for i = 1:obj.childCount
-                if isa(obj.children(i), 'LeadfieldNode')
-                    leadfield = obj.children(i);
-                    return;
                 end
             end
         end
@@ -262,8 +232,8 @@ classdef ProtocolNode < BaseNode
     end
 
     methods (Static)
-        function protocol = openProtocol(srcPath, parentProject)
-            %OPENPROTOCOL 打开现有协议
+        function protocol = openExisting(srcPath)
+            %OPENEXISTING 打开现有协议
             % 输入:
             %   srcPath - 协议文件路径或协议文件夹路径
             %   parentProject - 父项目节点
@@ -278,17 +248,14 @@ classdef ProtocolNode < BaseNode
             end
             
             % 创建协议节点
-            [~, protocolName, ~] = fileparts(srcPath);
-            tgtPath = fullfile(parentProject.path, "Protocols", protocolName);
-            protocol = ProtocolNode(tgtPath);
+            protocol = ProtocolNode();
 
             % 加载协议数据
             protocol.open(srcPath);
-            parentProject.addChild(protocol);
         end
         
-        function protocol = createNewProtocol(protocolName, parentProject, varargin)
-            %CREATENEWPROTOCOL 创建新协议
+        function protocol = createNew(protocolName, path, varargin)
+            %CREATENEW 创建新协议
             % 输入:
             %   protocolName - 协议名称
             %   parentProject - 父项目节点
@@ -296,22 +263,20 @@ classdef ProtocolNode < BaseNode
             
             p = inputParser;
             addRequired(p, 'protocolName', Validators.isText);
-            addRequired(p, 'parentProject', @(x) isa(x, 'ProjectNode'));
+            addRequired(p, 'path', Validators.isText);
             addParameter(p, 'Type', '', Validators.isText);
             addParameter(p, 'Description', '', Validators.isText);
             
-            parse(p, protocolName, parentProject, varargin{:});
+            parse(p, protocolName, path, varargin{:});
             
             % 构建协议路径
-            protocolPath = fullfile(parentProject.path, 'Protocols', protocolName);
+            protocolPath = fullfile(path, protocolName);
             
             % 创建协议节点
-            protocol = ProtocolNode(protocolPath);
+            protocol = ProtocolNode();
+            protocol.path = protocolPath;
             protocol.protocolInfo = ProtocolInfo.createNew(...
                 p.Results.protocolName, p.Results.Type, p.Results.Description);
-            
-            % 添加到父项目
-            parentProject.addChild(protocol);
             
             % 保存协议
             protocol.save();

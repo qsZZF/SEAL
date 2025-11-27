@@ -119,7 +119,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             validateattributes(childNode, {'BaseNode'}, {'scalar'});
             
             % 检查唯一性
-            if isSubNode(childNode)
+            if obj.isSubNode(childNode)
                 return
             end
             
@@ -150,7 +150,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             validateattributes(childNode, {'BaseNode'}, {'scalar'});
             
             % 检查是否为直接子节点
-            if ~isSubNode(childNode)
+            if ~obj.isSubNode(childNode)
                 return
             end
             
@@ -158,9 +158,9 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             childNode.parent = BaseNode.empty;
             obj.children(obj.children == childNode) = [];
             
-            % 触发事件
-            obj.notify('NodeRemoved', NodeEventData(childNode));
-            obj.updateModifiedDate();
+%             % 触发事件
+%             obj.notify('NodeRemoved', NodeEventData(childNode));
+%             obj.updateModifiedDate();
         end
         
         function child = getChild(obj, childName, recursive)
@@ -309,7 +309,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
 
         function res = isSubNode(obj, other)
             if ~isempty(obj.children)
-                childIds = arrayfun(@(x) string(x.name), obj.children);
+                childIds = arrayfun(@(x) string(x.uuid), obj.children);
                 if any(strcmp(childIds, string(other.uuid)))
                     res = true;
                     return

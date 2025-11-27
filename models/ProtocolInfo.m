@@ -7,6 +7,10 @@ classdef ProtocolInfo < handle
         name string = "Untitled"
         type string = ""  % 协议类型
         desc string = ""  % 协议描述
+
+        channelPath string = ""
+        cortexPath string = ""
+        leadfieldPath string = ""
         
         % 元数据
         metadata struct % 用户自定义元数据
