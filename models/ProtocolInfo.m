@@ -65,7 +65,7 @@ classdef ProtocolInfo < handle
             
             % 保存协议元数据
             obj.updateModifiedDate();
-            save(fullfile(path, strcat(obj.name, '.mat')), 'obj');
+            saveData(fullfile(path, strcat(obj.name, '.mat')), obj);
         end
         
         %% 验证方法
@@ -111,7 +111,7 @@ classdef ProtocolInfo < handle
             end
             
             % 加载协议数据
-            protocol = load(protocolFile, 'obj').obj;
+            protocol = loadData(protocolFile);
             
             % 验证加载的对象类型
             if ~isa(protocol, 'ProtocolInfo')

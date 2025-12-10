@@ -125,15 +125,14 @@ classdef ProtocolNode < BaseNode
         function setChannelNode(obj, channelNode)
             %SETCHANNELNODE 设置通道节点
             % 移除现有的通道节点
-            clear(obj.channelNode);
             obj.channelNode = channelNode;
+            obj.protocolInfo.channelPath = obj.channelNode.path;
             channelNode.parent = obj;
         end
         
         function setCortexNode(obj, cortexNode)
             %SETCORTEXNODE 设置皮层节点
             % 移除现有的皮层节点
-            clear(obj.cortexNode);
             obj.cortexNode = cortexNode;
             cortexNode.parent = obj;
         end
@@ -141,20 +140,9 @@ classdef ProtocolNode < BaseNode
         function setLeadfieldNode(obj, leadfieldNode)
             %SETLEADFIELDNODE 设置导联场节点
             % 移除现有的导联场节点
-            clear(obj.leadfieldNode);
             obj.leadfieldNode = leadfieldNode;
             leadfieldNode.parent = obj;
         end
-
-%         function node = openChannel(obj, channelPath)
-%             node = ChannelNode.openExisting(channelPath);
-%             % ProtocolInfo 相对轻量，且导入的Protocol不应该远程修改原始信息
-%             % 故此处强行设置当前project的path而非使用原始path
-%             % 在save时等价于自动复制并保存
-%             node.path = channelPath;
-%             obj.protocolInfo.channelPath = channelPath;
-%             obj.addChild(node);
-%         end
         
         %% 依赖属性get方法
         function count = get.sessionCount(obj)

@@ -57,7 +57,7 @@ classdef ProjectInfo < handle
             
             % 保存项目元数据
             obj.updateModifiedDate();
-            save(fullfile(path, strcat(obj.name, '.mat')), 'obj');
+            saveData(fullfile(path, strcat(obj.name, '.mat')), obj);
         end
     end
     
@@ -95,7 +95,7 @@ classdef ProjectInfo < handle
             end
             
             % 加载项目数据
-            project = load(projectFile, 'obj').obj;
+            project = loadData(projectFile);
         end
     end
 end

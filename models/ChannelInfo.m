@@ -7,9 +7,8 @@ classdef ChannelInfo < handle
         name string = "Untitled"
         desc string = ""
         
-        % 通道数据
+        % 通道数据地址
         dataPath string            % 通道数据存储
-        data struct
         
         % 元数据
         metadata struct        % 用户自定义元数据
@@ -38,9 +37,9 @@ classdef ChannelInfo < handle
                 obj.name = name;
             end
             if nargin >= 2
-                obj.names = channelNames;
+                obj.dataPath = dataPath;
             else
-                obj.names = {};
+                obj.dataPath = {};
             end
             if nargin >= 3
                 obj.desc = desc;
@@ -54,7 +53,6 @@ classdef ChannelInfo < handle
             % 初始化时间戳
             obj.createdDate = datetime('now');
             obj.modifiedDate = obj.createdDate;
-            obj.data = struct();
             obj.dataPath = dataPath;
         end
         
@@ -72,7 +70,7 @@ classdef ChannelInfo < handle
             
             % 保存通道元数据
             obj.updateModifiedDate();
-            save(fullfile(path, strcat(obj.name, '.mat')), 'obj');
+            saveData(fullfile(path, strcat(obj.name, '.mat')), obj);
         end
     end
     
@@ -112,13 +110,59 @@ classdef ChannelInfo < handle
             end
             
             % 加载通道数据
-            channel = load(channelFile, 'obj').obj;
+            channel = loadData(channelFile);
             
             % 验证加载的对象类型
             if ~isa(channel, 'ChannelInfo')
                 error('SEAL:ChannelInfo:InvalidFileFormat', ...
                     'File does not contain a valid ChannelInfo object: %s', channelFile);
             end
+        end
+
+        function channel = fromData(dataPath, varargin)
+            %FROMDATA 从通道数据文件直接创建ChannelInfo
+            % 输入:
+            %   dataPath - 通道数据文件路径
+            %   varargin - 可选参数:
+            %     'Name' - 通道名称（可选，默认为文件名）
+            %     'Description' - 通道描述
+            %     'Metadata' - 额外元数据
+            % 输出:
+            %   channel - ChannelInfo对象
+            
+            % 参数解析
+            p = inputParser;
+            addRequired(p, 'dataPath', @(x) isfile(x) && endsWith(x, '.mat'));
+            addParameter(p, 'Name', '', @(x) ischar(x) || isstring(x));
+            addParameter(p, 'Description', '', @(x) ischar(x) || isstring(x));
+            addParameter(p, 'Metadata', struct(), @isstruct);
+            addParameter(p, 'AutoExtract', true, @islogical);
+            
+            parse(p, dataPath, varargin{:});
+            
+            % 如果未提供名称，使用文件名
+            if isempty(p.Results.Name)
+                [~, name, ~] = fileparts(dataPath);
+                channelName = name;
+            else
+                channelName = p.Results.Name;
+            end
+            
+            % 从数据文件中提取元数据
+            metadata = p.Results.Metadata;
+%             if p.Results.AutoExtract
+%                 metadata = ChannelInfo.extractMetadata(dataPath, metadata);
+%             end
+            
+            % 创建ChannelInfo对象
+            channel = ChannelInfo(...
+                channelName, ...
+                dataPath, ...
+                p.Results.Description, ...
+                metadata);
+        end
+
+        function meta = extractMetadata(dataPath)
         end
     end
 end

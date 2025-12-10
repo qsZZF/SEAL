@@ -20,7 +20,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         uuid string
         tags string
         isSelected logical
-        isLoaded logical
+        isLoaded logical = false
         
         % 元数据
         metadata struct
@@ -257,6 +257,11 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         
         function delete(obj)
             %DELETE 析构函数
+
+            if ~isvalid(obj)
+                return
+            end
+
             obj.unload();
             
             % 清理父子关系
@@ -308,7 +313,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         end
 
         function res = isSubNode(obj, other)
-            if ~isempty(obj.children)
+            if obj.hasChildren
                 childIds = arrayfun(@(x) string(x.uuid), obj.children);
                 if any(strcmp(childIds, string(other.uuid)))
                     res = true;
