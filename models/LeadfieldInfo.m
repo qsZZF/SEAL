@@ -1,14 +1,14 @@
-classdef ChannelInfo < handle
-    %CHANNELINFO 通道信息管理类
-    % 负责通道数据的元数据管理和存储
+classdef LeadfieldInfo < handle
+    %LEADFIELDINFO 导联场信息管理类
+    % 负责导联场数据的元数据管理和存储
 
     properties (SetAccess = public)
         % 基本信息
         name string = "Untitled"
         desc string = ""
         
-        % 通道数据地址
-        dataPath string            % 通道数据存储
+        % 导联场数据地址
+        dataPath string            % 导联场数据存储
         
         % 元数据
         metadata struct        % 用户自定义元数据
@@ -21,14 +21,14 @@ classdef ChannelInfo < handle
     end
     
     properties (Dependent)
-        channelCount int32     % 通道数量
+        leadfieldCount int32     % 导联场数量
     end
     
     methods
-        function obj = ChannelInfo(name, dataPath, desc, metadata)
-            %CHANNELINFO 构造函数
+        function obj = LeadfieldInfo(name, dataPath, desc, metadata)
+            %LEADFIELDINFO 构造函数
             % 输入:
-            %   name - 通道集合名称
+            %   name - 导联场集合名称
             %   dataPath - 原始数据路径
             %   desc - 描述
             %   metadata - 元数据
@@ -58,13 +58,13 @@ classdef ChannelInfo < handle
         
         %% 文件操作方法
         function save(obj, path)
-            %SAVE 保存通道信息
+            %SAVE 保存导联场信息
             if path == ""
-                error('SEAL:ChannelInfo:InvalidPath', ...
-                    'No valid channel path specified.');
+                error('SEAL:LeadfieldInfo:InvalidPath', ...
+                    'No valid leadfield path specified.');
             end
-
-            % 保存通道元数据
+            
+            % 保存导联场元数据
             obj.updateModifiedDate();
             saveData(path, obj);
         end
@@ -79,40 +79,40 @@ classdef ChannelInfo < handle
     
     %% 静态方法
     methods (Static)
-        function channel = openExisting(channelPath)
-            %OPENEXISTING 打开现有通道信息
+        function leadfield = openExisting(leadfieldPath)
+            %OPENEXISTING 打开现有导联场信息
             % 输入:
-            %   channelPath - 通道文件路径
+            %   leadfieldPath - 导联场文件路径
             % 输出:
-            %   channel - 加载的ChannelInfo对象
+            %   leadfield - 加载的LeadfieldInfo对象
 
-            channelFile = channelPath;
+            leadfieldFile = leadfieldPath;
             
-            if ~isfile(channelFile)
-                error('SEAL:ChannelInfo:FileNotFound', ...
-                    'No such file exists: %s', channelFile);
+            if ~isfile(leadfieldFile)
+                error('SEAL:LeadfieldInfo:FileNotFound', ...
+                    'No such file exists: %s', leadfieldFile);
             end
             
-            % 加载通道数据
-            channel = loadData(channelFile);
+            % 加载导联场数据
+            leadfield = loadData(leadfieldFile);
             
             % 验证加载的对象类型
-            if ~isa(channel, 'ChannelInfo')
-                error('SEAL:ChannelInfo:InvalidFileFormat', ...
-                    'File does not contain a valid ChannelInfo object: %s', channelFile);
+            if ~isa(leadfield, 'LeadfieldInfo')
+                error('SEAL:LeadfieldInfo:InvalidFileFormat', ...
+                    'File does not contain a valid LeadfieldInfo object: %s', leadfieldFile);
             end
         end
 
-        function channel = fromData(dataPath, varargin)
-            %FROMDATA 从通道数据文件直接创建ChannelInfo
+        function leadfield = fromData(dataPath, varargin)
+            %FROMDATA 从导联场数据文件直接创建LeadfieldInfo
             % 输入:
-            %   dataPath - 通道数据文件路径
+            %   dataPath - 导联场数据文件路径
             %   varargin - 可选参数:
-            %     'Name' - 通道名称（可选，默认为文件名）
-            %     'Description' - 通道描述
+            %     'Name' - 导联场名称（可选，默认为文件名）
+            %     'Description' - 导联场描述
             %     'Metadata' - 额外元数据
             % 输出:
-            %   channel - ChannelInfo对象
+            %   leadfield - LeadfieldInfo对象
             
             % 参数解析
             p = inputParser;
@@ -127,17 +127,20 @@ classdef ChannelInfo < handle
             % 如果未提供名称，使用文件名
             if isempty(p.Results.Name)
                 [~, name, ~] = fileparts(dataPath);
-                channelName = name;
+                leadfieldName = name;
             else
-                channelName = p.Results.Name;
+                leadfieldName = p.Results.Name;
             end
             
             % 从数据文件中提取元数据
             metadata = p.Results.Metadata;
+%             if p.Results.AutoExtract
+%                 metadata = LeadfieldInfo.extractMetadata(dataPath, metadata);
+%             end
             
-            % 创建ChannelInfo对象
-            channel = ChannelInfo(...
-                channelName, ...
+            % 创建LeadfieldInfo对象
+            leadfield = LeadfieldInfo(...
+                leadfieldName, ...
                 dataPath, ...
                 p.Results.Description, ...
                 metadata);

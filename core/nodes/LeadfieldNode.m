@@ -1,14 +1,14 @@
-classdef ChannelNode < BaseNode
-    %CHANNELNODE 通道节点
-    % 管理协议的通道信息，包含通道名称、位置等元数据
+classdef LeadfieldNode < BaseNode
+    %LEADFIELDNODE 导联场节点
+    % 管理协议的导联场信息，包含导联场名称、位置等元数据
     
     properties (Constant)
-        type = "ChannelNode"  % 节点类型标识符
+        type = "LeadfieldNode"  % 节点类型标识符
     end
     
     properties
-        % 通道特定属性
-        channelInfo ChannelInfo
+        % 导联场特定属性
+        leadfieldInfo LeadfieldInfo
         cache
     end
     
@@ -19,8 +19,8 @@ classdef ChannelNode < BaseNode
     end
     
     methods
-        function obj = ChannelNode()
-            %CHANNELNODE 构造函数
+        function obj = LeadfieldNode()
+            %LEADFIELDNODE 构造函数
             
             % 调用父类构造函数
             obj = obj@BaseNode();
@@ -31,7 +31,7 @@ classdef ChannelNode < BaseNode
             
             % 检查路径是文件夹还是文件
             if isfolder(path)
-                file = fullfile(path, "channel_info.mat");
+                file = fullfile(path, "leadfield_info.mat");
             else
                 file = path;
                 [path, name, ~] = fileparts(path);
@@ -47,44 +47,45 @@ classdef ChannelNode < BaseNode
             obj.path = path;
             
             try
-                obj.channelInfo = ChannelInfo.openExisting(file);
+                obj.leadfieldInfo = LeadfieldInfo.openExisting(file);
             catch ME
-                error('SEAL:ChannelNode:LoadFailed', ...
-                    'Failed to open channel data: %s', ME.message);
+                error('SEAL:LeadfieldNode:LoadFailed', ...
+                    'Failed to open leadfield data: %s', ME.message);
             end
         end
 
+
         function save(obj)
-            %SAVE 保存通道数据
+            %SAVE 保存导联场数据
             obj.createDirectoryStructure();
-            obj.channelInfo.save(fullfile(obj.path, "channel_info.mat"));
+            obj.leadfieldInfo.save(fullfile(obj.path, "leadfield_info.mat"));
         end
 
         function load(obj)
-            %LOAD 加载通道数据
+            %LOAD 加载导联场数据
             if obj.isLoaded
                 return;
             end
             
-            % 加载通道元数据
-            if ~isempty(obj.channelInfo)
-                [~, name, ~] = fileparts(obj.channelInfo.dataPath);
-                if isfile(obj.channelInfo.dataPath)
-                    obj.cache = loadData(obj.channelInfo.dataPath);
+            % 加载导联场元数据
+            if ~isempty(obj.leadfieldInfo)
+                [~, name, ~] = fileparts(obj.leadfieldInfo.dataPath);
+                if isfile(obj.leadfieldInfo.dataPath)
+                    obj.cache = loadData(obj.leadfieldInfo.dataPath);
                     obj.isLoaded = true;
                 end
             end
         end
 
         function unload(obj)
-            %UNLOAD 卸载通道数据，释放内存
+            %UNLOAD 卸载导联场数据，释放内存
             obj.cache = [];
             obj.isLoaded = false;
         end
         
         %% 依赖属性get方法
-        function channelName = get.name(obj)
-            channelName = obj.channelInfo.name;
+        function leadfieldName = get.name(obj)
+            leadfieldName = obj.leadfieldInfo.name;
         end
         
         function data = get.data(obj)
@@ -97,28 +98,29 @@ classdef ChannelNode < BaseNode
     end
 
     methods (Static)
-        function channel = fromInfo(channelInfo)
-            channel = ChannelNode();
-            channel.channelInfo = channelInfo();
+        
+        function leadfield = fromInfo(leadfieldInfo)
+            leadfield = LeadfieldNode();
+            leadfield.leadfieldInfo = leadfieldInfo();
         end
 
-        function channel = openExisting(srcPath)
-            %OPENCHANNEL 打开现有通道数据
+        function leadfield = openExisting(srcPath)
+            %OPENLEADFIELD 打开现有导联场数据
             % 输入:
-            %   srcPath - 通道文件路径或通道文件夹路径
+            %   srcPath - 导联场文件路径或导联场文件夹路径
             %   parentProtocol - 父协议节点
             
-            % 创建通道节点
-            channel = ChannelNode();
+            % 创建导联场节点
+            leadfield = LeadfieldNode();
 
-            % 加载通道数据
-            channel.open(getmat(srcPath));
+            % 加载导联场数据
+            leadfield.open(getmat(srcPath));
         end
     end
 
     methods (Access = private)
         function createDirectoryStructure(obj)
-            %CREATEDIRECTORYSTRUCTURE 创建通道目录结构
+            %CREATEDIRECTORYSTRUCTURE 创建导联场目录结构
             
             if obj.path == ""
                 return;

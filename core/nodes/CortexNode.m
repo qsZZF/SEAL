@@ -1,14 +1,14 @@
-classdef ChannelNode < BaseNode
-    %CHANNELNODE 通道节点
-    % 管理协议的通道信息，包含通道名称、位置等元数据
+classdef CortexNode < BaseNode
+    %CORTEXNODE 皮层节点
+    % 管理协议的皮层信息，包含皮层名称、位置等元数据
     
     properties (Constant)
-        type = "ChannelNode"  % 节点类型标识符
+        type = "CortexNode"  % 节点类型标识符
     end
     
     properties
-        % 通道特定属性
-        channelInfo ChannelInfo
+        % 皮层特定属性
+        cortexInfo CortexInfo
         cache
     end
     
@@ -19,8 +19,8 @@ classdef ChannelNode < BaseNode
     end
     
     methods
-        function obj = ChannelNode()
-            %CHANNELNODE 构造函数
+        function obj = CortexNode()
+            %CORTEXNODE 构造函数
             
             % 调用父类构造函数
             obj = obj@BaseNode();
@@ -31,7 +31,7 @@ classdef ChannelNode < BaseNode
             
             % 检查路径是文件夹还是文件
             if isfolder(path)
-                file = fullfile(path, "channel_info.mat");
+                file = fullfile(path, "cortex_info.mat");
             else
                 file = path;
                 [path, name, ~] = fileparts(path);
@@ -47,44 +47,45 @@ classdef ChannelNode < BaseNode
             obj.path = path;
             
             try
-                obj.channelInfo = ChannelInfo.openExisting(file);
+                obj.cortexInfo = CortexInfo.openExisting(file);
             catch ME
                 error('SEAL:ChannelNode:LoadFailed', ...
                     'Failed to open channel data: %s', ME.message);
             end
         end
 
+
         function save(obj)
-            %SAVE 保存通道数据
+            %SAVE 保存皮层数据
             obj.createDirectoryStructure();
-            obj.channelInfo.save(fullfile(obj.path, "channel_info.mat"));
+            obj.cortexInfo.save(fullfile(obj.path, "cortex_info.mat"));
         end
 
         function load(obj)
-            %LOAD 加载通道数据
+            %LOAD 加载皮层数据
             if obj.isLoaded
                 return;
             end
             
-            % 加载通道元数据
-            if ~isempty(obj.channelInfo)
-                [~, name, ~] = fileparts(obj.channelInfo.dataPath);
-                if isfile(obj.channelInfo.dataPath)
-                    obj.cache = loadData(obj.channelInfo.dataPath);
+            % 加载皮层元数据
+            if ~isempty(obj.cortexInfo)
+                [~, name, ~] = fileparts(obj.cortexInfo.dataPath);
+                if isfile(obj.cortexInfo.dataPath)
+                    obj.cache = loadData(obj.cortexInfo.dataPath);
                     obj.isLoaded = true;
                 end
             end
         end
 
         function unload(obj)
-            %UNLOAD 卸载通道数据，释放内存
+            %UNLOAD 卸载皮层数据，释放内存
             obj.cache = [];
             obj.isLoaded = false;
         end
         
         %% 依赖属性get方法
-        function channelName = get.name(obj)
-            channelName = obj.channelInfo.name;
+        function cortexName = get.name(obj)
+            cortexName = obj.cortexInfo.name;
         end
         
         function data = get.data(obj)
@@ -97,28 +98,29 @@ classdef ChannelNode < BaseNode
     end
 
     methods (Static)
-        function channel = fromInfo(channelInfo)
-            channel = ChannelNode();
-            channel.channelInfo = channelInfo();
+
+        function cortex = fromInfo(cortexInfo)
+            cortex = CortexNode();
+            cortex.cortexInfo = cortexInfo();
         end
 
-        function channel = openExisting(srcPath)
-            %OPENCHANNEL 打开现有通道数据
+        function cortex = openExisting(srcPath)
+            %OPENCORTEX 打开现有皮层数据
             % 输入:
-            %   srcPath - 通道文件路径或通道文件夹路径
+            %   srcPath - 皮层文件路径或皮层文件夹路径
             %   parentProtocol - 父协议节点
             
-            % 创建通道节点
-            channel = ChannelNode();
+            % 创建皮层节点
+            cortex = CortexNode();
 
-            % 加载通道数据
-            channel.open(getmat(srcPath));
+            % 加载皮层数据
+            cortex.open(getmat(srcPath));
         end
     end
 
     methods (Access = private)
         function createDirectoryStructure(obj)
-            %CREATEDIRECTORYSTRUCTURE 创建通道目录结构
+            %CREATEDIRECTORYSTRUCTURE 创建皮层目录结构
             
             if obj.path == ""
                 return;

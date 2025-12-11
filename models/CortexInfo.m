@@ -1,14 +1,14 @@
-classdef ChannelInfo < handle
-    %CHANNELINFO 通道信息管理类
-    % 负责通道数据的元数据管理和存储
+classdef CortexInfo < handle
+    %CORTEXINFO 皮层信息管理类
+    % 负责皮层数据的元数据管理和存储
 
     properties (SetAccess = public)
         % 基本信息
         name string = "Untitled"
         desc string = ""
         
-        % 通道数据地址
-        dataPath string            % 通道数据存储
+        % 皮层数据地址
+        dataPath string            % 皮层数据存储
         
         % 元数据
         metadata struct        % 用户自定义元数据
@@ -21,14 +21,14 @@ classdef ChannelInfo < handle
     end
     
     properties (Dependent)
-        channelCount int32     % 通道数量
+        cortexCount int32     % 皮层数量
     end
     
     methods
-        function obj = ChannelInfo(name, dataPath, desc, metadata)
-            %CHANNELINFO 构造函数
+        function obj = CortexInfo(name, dataPath, desc, metadata)
+            %CORTEXINFO 构造函数
             % 输入:
-            %   name - 通道集合名称
+            %   name - 皮层集合名称
             %   dataPath - 原始数据路径
             %   desc - 描述
             %   metadata - 元数据
@@ -58,13 +58,13 @@ classdef ChannelInfo < handle
         
         %% 文件操作方法
         function save(obj, path)
-            %SAVE 保存通道信息
+            %SAVE 保存皮层信息
             if path == ""
-                error('SEAL:ChannelInfo:InvalidPath', ...
-                    'No valid channel path specified.');
+                error('SEAL:CortexInfo:InvalidPath', ...
+                    'No valid cortex path specified.');
             end
-
-            % 保存通道元数据
+            
+            % 保存皮层元数据
             obj.updateModifiedDate();
             saveData(path, obj);
         end
@@ -79,40 +79,40 @@ classdef ChannelInfo < handle
     
     %% 静态方法
     methods (Static)
-        function channel = openExisting(channelPath)
-            %OPENEXISTING 打开现有通道信息
+        function cortex = openExisting(cortexPath)
+            %OPENEXISTING 打开现有皮层信息
             % 输入:
-            %   channelPath - 通道文件路径
+            %   cortexPath - 皮层文件路径
             % 输出:
-            %   channel - 加载的ChannelInfo对象
+            %   cortex - 加载的CortexInfo对象
 
-            channelFile = channelPath;
+            cortexFile = cortexPath;
             
-            if ~isfile(channelFile)
-                error('SEAL:ChannelInfo:FileNotFound', ...
-                    'No such file exists: %s', channelFile);
+            if ~isfile(cortexFile)
+                error('SEAL:CortexInfo:FileNotFound', ...
+                    'No such file exists: %s', cortexFile);
             end
             
-            % 加载通道数据
-            channel = loadData(channelFile);
+            % 加载皮层数据
+            cortex = loadData(cortexFile);
             
             % 验证加载的对象类型
-            if ~isa(channel, 'ChannelInfo')
-                error('SEAL:ChannelInfo:InvalidFileFormat', ...
-                    'File does not contain a valid ChannelInfo object: %s', channelFile);
+            if ~isa(cortex, 'CortexInfo')
+                error('SEAL:CortexInfo:InvalidFileFormat', ...
+                    'File does not contain a valid CortexInfo object: %s', cortexFile);
             end
         end
 
-        function channel = fromData(dataPath, varargin)
-            %FROMDATA 从通道数据文件直接创建ChannelInfo
+        function cortex = fromData(dataPath, varargin)
+            %FROMDATA 从皮层数据文件直接创建CortexInfo
             % 输入:
-            %   dataPath - 通道数据文件路径
+            %   dataPath - 皮层数据文件路径
             %   varargin - 可选参数:
-            %     'Name' - 通道名称（可选，默认为文件名）
-            %     'Description' - 通道描述
+            %     'Name' - 皮层名称（可选，默认为文件名）
+            %     'Description' - 皮层描述
             %     'Metadata' - 额外元数据
             % 输出:
-            %   channel - ChannelInfo对象
+            %   cortex - CortexInfo对象
             
             % 参数解析
             p = inputParser;
@@ -127,17 +127,20 @@ classdef ChannelInfo < handle
             % 如果未提供名称，使用文件名
             if isempty(p.Results.Name)
                 [~, name, ~] = fileparts(dataPath);
-                channelName = name;
+                cortexName = name;
             else
-                channelName = p.Results.Name;
+                cortexName = p.Results.Name;
             end
             
             % 从数据文件中提取元数据
             metadata = p.Results.Metadata;
+%             if p.Results.AutoExtract
+%                 metadata = CortexInfo.extractMetadata(dataPath, metadata);
+%             end
             
-            % 创建ChannelInfo对象
-            channel = ChannelInfo(...
-                channelName, ...
+            % 创建CortexInfo对象
+            cortex = CortexInfo(...
+                cortexName, ...
                 dataPath, ...
                 p.Results.Description, ...
                 metadata);

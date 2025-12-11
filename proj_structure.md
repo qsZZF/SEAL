@@ -179,18 +179,15 @@ Projects/
 │   ├── Protocols/
 │   │   ├── Protocol1/
 │   │   │   ├── protocol_info.mat
-│   │   │   ├── channel.mat
-│   │   │   ├── cortex.mat
-│   │   │   ├── leadfield.mat
+│   │   │   ├── Singleton/
+│   │   │   │   ├── channel_info.mat
+│   │   │   │   ├── cortex_info.mat
+│   │   │   │   └── leadfield_info.mat
 │   │   │   └── Sessions/
-│   │   │       ├── Session1/
-│   │   │       │   ├── session_info.mat
-│   │   │       │   ├── OriginalData/
-│   │   │       │   │   ├── data_info.mat
-│   │   │       │   │   ├── data.mat
-│   │   │       │   │   └── result.mat
-│   │   │       │   └── FilteredData1/
-│   │   │       │       ├── data_info.mat
-│   │   │       │       ├── data.mat
-│   │   │       │       └── result.mat
+│   │   │       └── Session1/
+│   │   │           ├── session_info.mat
+│   │   │           ├── OriginalData/
+│   │   │           │   └── data_info.mat
+│   │   │           └── FilteredData1/
+│   │   │               └── data_info.mat
 ```

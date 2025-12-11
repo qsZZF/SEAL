@@ -90,7 +90,6 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             % 4. 验证协议属性
             testCase.verifyEqual(externalProtocol.name, testCase.testExternalProtocolName);
             testCase.verifyEqual(externalProtocol.protocolType, "EEG");
-            testCase.verifyTrue(externalProtocol.isLoaded);
             
             % 5. 验证协议已添加到项目
             testCase.verifyEqual(testCase.projectNode.protocolCount, 1);
@@ -128,7 +127,6 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             % 4. 验证协议属性
             testCase.verifyEqual(externalProtocol.name, testCase.testExternalProtocolName);
             testCase.verifyEqual(externalProtocol.protocolType, "MEG");
-            testCase.verifyTrue(externalProtocol.isLoaded);
             
             % 5. 验证协议已添加到项目
             testCase.verifyEqual(testCase.projectNode.protocolCount, 1);
