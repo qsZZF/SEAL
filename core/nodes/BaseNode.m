@@ -31,7 +31,6 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         % 依赖属性
         isRoot logical
         isLeaf logical
-        depth int16
         childCount double
         hasChildren logical
     end
@@ -89,15 +88,6 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         function leaf = get.isLeaf(obj)
             %GET.ISLEAF 判断是否为叶节点
             leaf = isempty(obj.children);
-        end
-        
-        function depth = get.depth(obj)
-            %GET.DEPTH 获取节点深度
-            if obj.isRoot
-                depth = 0;
-            else
-                depth = obj.parent.depth + 1;
-            end
         end
         
         function count = get.childCount(obj)
@@ -247,7 +237,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         function select(obj)
             %SELECT 选择节点
             obj.isSelected = true;
-            obj.notify('NodeSelected', NodeEventData(obj));
+%             obj.notify('NodeSelected', NodeEventData(obj));
         end
         
         function deselect(obj)

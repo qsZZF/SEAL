@@ -215,25 +215,31 @@ classdef ProtocolNode < BaseNode
             leadfieldNode.parent = obj;
         end
 
-        function openChannelFromData(obj, dataPath)
+        function node = openChannelFromData(obj, dataPath)
             channelInfo = ChannelInfo.fromData(dataPath);
             obj.channelNode = ChannelNode.fromInfo(channelInfo);
             obj.channelNode.path = obj.path;
             obj.channelNode.parent = obj;
+            obj.channelNode.save();
+            node = obj.channelNode;
         end
 
-        function openCortexFromData(obj, dataPath)
+        function node = openCortexFromData(obj, dataPath)
             cortexInfo = CortexInfo.fromData(dataPath);
             obj.cortexNode = CortexNode.fromInfo(cortexInfo);
             obj.cortexNode.path = obj.path;
             obj.cortexNode.parent = obj;
+            obj.cortexNode.save();
+            node = obj.cortexNode;
         end
 
-       function openLeadfieldFromData(obj, dataPath)
+       function node = openLeadfieldFromData(obj, dataPath)
             leadfieldInfo = LeadfieldInfo.fromData(dataPath);
             obj.leadfieldNode = LeadfieldNode.fromInfo(leadfieldInfo);
             obj.leadfieldNode.path = obj.path;
             obj.leadfieldNode.parent = obj;
+            obj.leadfieldNode.save();
+            node = obj.leadfieldNode;
         end
         
         %% 依赖属性get方法
@@ -408,7 +414,6 @@ classdef ProtocolNode < BaseNode
             % 打开皮层节点
             if ~isempty(obj.cortexInfoPath) && isfile(obj.cortexInfoPath)
                 try
-                    fprintf('  Opening cortex node from: %s\n', obj.cortexInfoPath);
                     obj.cortexNode = CortexNode.openExisting(obj.cortexInfoPath);
                     obj.cortexNode.parent = obj;
                 catch ME
