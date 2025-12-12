@@ -59,12 +59,8 @@ classdef CortexInfo < handle
         %% 文件操作方法
         function save(obj, path)
             %SAVE 保存皮层信息
-            if path == ""
-                error('SEAL:CortexInfo:InvalidPath', ...
-                    'No valid cortex path specified.');
-            end
-            
-            % 保存皮层元数据
+
+            checkDir(path);
             obj.updateModifiedDate();
             saveData(path, obj);
         end

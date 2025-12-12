@@ -16,6 +16,7 @@ classdef CortexNode < BaseNode
         % 依赖属性
         name string
         data
+        infoFile string
     end
     
     methods
@@ -30,24 +31,21 @@ classdef CortexNode < BaseNode
             %OPEN 打开数据
             
             % 检查路径是文件夹还是文件
-            if isfolder(path)
-                file = fullfile(path, "cortex_info.mat");
-            else
-                file = path;
+            if isfile(path)
                 [path, name, ~] = fileparts(path);
-            end
-            
-            % 验证协议文件存在
-            if ~isfile(file)
-                error('SEAL:NoFile', ...
-                    'No such file in path: %s', path);
             end
 
             % 设置路径
             obj.path = path;
             
+            % 验证协议文件存在
+            if ~isfile(obj.infoFile)
+                error('SEAL:NoFile', ...
+                    'No such file in path: %s', obj.infoFile);
+            end
+            
             try
-                obj.cortexInfo = CortexInfo.openExisting(file);
+                obj.cortexInfo = CortexInfo.openExisting(obj.infoFile);
             catch ME
                 error('SEAL:ChannelNode:LoadFailed', ...
                     'Failed to open channel data: %s', ME.message);
@@ -58,7 +56,7 @@ classdef CortexNode < BaseNode
         function save(obj)
             %SAVE 保存皮层数据
             obj.createDirectoryStructure();
-            obj.cortexInfo.save(fullfile(obj.path, "cortex_info.mat"));
+            obj.cortexInfo.save(obj.infoFile);
         end
 
         function load(obj)
@@ -93,6 +91,10 @@ classdef CortexNode < BaseNode
                 obj.load();
             end
             data = obj.cache;
+        end
+
+        function path = get.infoFile(obj)
+            path = fullfile(obj.path, "cortex_info.mat");
         end
     
     end

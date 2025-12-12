@@ -65,12 +65,8 @@ classdef DataInfo < handle
         %% 文件操作方法
         function save(obj, path)
             %SAVE 保存信息
-            if path == ""
-                error('SEAL:DataInfo:InvalidPath', ...
-                    'No valid data path specified.');
-            end
 
-            % 保存元数据
+            checkDir(path);
             obj.updateModifiedDate();
             saveData(path, obj);
         end

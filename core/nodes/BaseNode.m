@@ -38,6 +38,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
     properties (Abstract, Dependent, SetAccess = public)
         % 依赖属性
         name string
+%         infoPath string
     end
     
     events

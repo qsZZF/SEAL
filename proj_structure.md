@@ -178,11 +178,10 @@ Projects/
 │   ├── project_info.mat
 │   ├── Protocols/
 │   │   ├── Protocol1/
-│   │   │   ├── protocol_info.mat
-│   │   │   ├── Singleton/
-│   │   │   │   ├── channel_info.mat
-│   │   │   │   ├── cortex_info.mat
-│   │   │   │   └── leadfield_info.mat
+│   │   │   ├── Protocol1.mat
+│   │   │   ├── channel_info.mat
+│   │   │   ├── cortex_info.mat
+│   │   │   ├── leadfield_info.mat
 │   │   │   └── Sessions/
 │   │   │       └── Session1/
 │   │   │           ├── session_info.mat

@@ -15,6 +15,8 @@ classdef ProjectNode < BaseNode
         % 依赖属性
         name string
         protocolCount int32                 % 协议数量
+        infoFile string
+        protocolFolder string
     end
     
     methods
@@ -35,29 +37,26 @@ classdef ProjectNode < BaseNode
                 if isfile(projectPath)
                     % 如果是文件路径，提取文件夹路径
                     [projectPath, ~, ~] = fileparts(projectPath);
-                    projectFile = projectPath;
-                else
-                    % 如果是文件夹路径
-                    [~, projectName, ~] = fileparts(projectPath);
-                    projectFile = fullfile(projectPath, strcat(projectName, '.mat'));
                 end
+
+                obj.path = projectPath;
                 
                 % 检查项目文件是否存在
-                if ~isfile(projectFile)
+                if ~isfile(obj.infoFile)
                     warning('SEAL:ProjectNode:ProjectFileNotFound', ...
-                        'No such project exists: %s', projectFile);
+                        'No such project exists: %s', obj.infoFile);
                     return;
                 end
                 
                 % 加载项目元数据
-                obj.path = projectPath;
-                obj.projectInfo = ProjectInfo.openExisting(projectFile);
+                
+                obj.projectInfo = ProjectInfo.openExisting(obj.infoFile);
                 
                 % 加载Protocol
-                obj.loadAllProtocols();
+                obj.openChildNodes();
                 
                 % 标记为已加载
-                obj.isLoaded = true;
+                obj.isLoaded = false;
                 
             catch ME
                 error('SEAL:ProjectNode:LoadFailed', ...
@@ -67,20 +66,14 @@ classdef ProjectNode < BaseNode
 
         function save(obj)
             %SAVE 保存项目数据
-%             fprintf('Saving: %s\n', obj.name);
 
             obj.createDirectoryStructure();
-            obj.projectInfo.save(obj.path);
+            obj.projectInfo.save(obj.infoFile);
             
             % 递归保存所有子节点
             for i = 1:obj.childCount
                 obj.children(i).save();
             end
-            
-%             % 触发保存事件
-%             obj.notify('NodeSaved', NodeEventData(obj));
-            
-%             fprintf('Project successfully saved: %s\n', obj.name);
         end
 
         function load(obj)
@@ -90,10 +83,7 @@ classdef ProjectNode < BaseNode
             for i = 1:obj.childCount
                 obj.children(i).load();
             end
-
-            % 标记为未加载
             obj.isLoaded = true;
-
         end
 
         function unload(obj)
@@ -103,9 +93,20 @@ classdef ProjectNode < BaseNode
             for i = 1:obj.childCount
                 obj.children(i).unload();
             end
-            
-            % 标记为未加载
             obj.isLoaded = false;
+        end
+
+        function rename(obj, newName)
+%           等待进一步实现，这个功能是否要加入待定
+            oldPath = obj.path;
+            oldInfoFile = obj.infoFile;
+            [parentPath, ~, ~] = obj.path;
+
+            obj.projectInfo.name = newName;
+            newPath = strcat(parentPath, newName);
+            rename(oldInfoFile, obj.infoFile);
+            rename(oldPath, newPath);
+            obj.path = newPath;
         end
         
         %% 依赖属性get方法
@@ -116,7 +117,15 @@ classdef ProjectNode < BaseNode
         function name = get.name(obj)
             name = obj.projectInfo.name;
         end
-        
+
+        function filePath = get.infoFile(obj)
+            [~, name, ~] = fileparts(obj.path);
+            filePath = fullfile(obj.path, strcat(name, '.mat'));
+        end
+
+        function protocolFolder = get.protocolFolder(obj)
+            protocolFolder = fullfile(obj.path, "Protocols");
+        end
         
         %% 重写父类方法
         function addChild(obj, childNode)
@@ -136,22 +145,20 @@ classdef ProjectNode < BaseNode
             
             % 调用父类方法
             removeChild@BaseNode(obj, childNode);
-            
         end
 
         function protocol = createNewProtocol(obj, protocolName, varargin)
-            protocolPath = fullfile(obj.path, "Protocols");
-            protocol = ProtocolNode.createNew(protocolName, protocolPath, varargin{:});
+            protocol = ProtocolNode.createNew(protocolName, obj.protocolFolder, varargin{:});
             obj.addChild(protocol);
         end
 
-        function protocol = openProtocol(obj, protocolPath)
-            protocol = ProtocolNode.openExisting(protocolPath);
+        function protocol = openProtocol(obj, protocolFolder)
+            protocol = ProtocolNode.openExisting(protocolFolder);
             % ProtocolInfo 相对轻量，且导入的Protocol不应该远程修改原始信息
             % 故此处强行设置当前project的path而非使用原始path
             % 在save时等价于自动复制并保存
-            [~,protocolName,~] = fileparts(protocolPath);
-            protocol.path = fullfile(obj.path, "Protocols", protocolName);
+            [~,protocolName,~] = fileparts(protocolFolder);
+            protocol.path = fullfile(obj.protocolFolder, protocolName);
             obj.addChild(protocol);
         end
 
@@ -159,32 +166,24 @@ classdef ProjectNode < BaseNode
             %OPENCHILDNODES 打开子节点
             % 这个方法会在打开协议时自动扫描并打开现有的子节点
             
-            protocolsPath = fullfile(obj.path, 'Protocols');
-            
             % 检查协议目录是否存在
-            if ~isfolder(protocolsPath)
+            if ~isfolder(obj.protocolFolder)
                 return;
             end
             
             % 获取所有协议目录
-            protocolDirs = dir(protocolsPath);
-            
-            for i = 1:length(protocolDirs)
-                protocolDir = protocolDirs(i);
-                
-                % 跳过 . 和 .. 目录以及非目录项
+            protocols = dir(obj.protocolFolder);
+            for i = 1:length(protocols)
+                protocolDir = protocols(i);
                 if protocolDir.isdir && ~startsWith(protocolDir.name, '.')
-                    protocolPath = fullfile(protocolsPath, protocolDir.name);
-                    
                     try
                         % 检查是否存在协议文件
-                        protocolFile = fullfile(protocolPath, strcat(protocolDir.name, '.mat'));
-                        if isfile(protocolFile)
+                        folder = fullfile(obj.protocolFolder, protocolDir.name);
+                        file = fullfile(folder, strcat(protocolDir.name, '.mat'));
+                        if isfile(file)
                             % 创建并加载协议节点
-                            tgtPath = fullfile(obj.path, "Protocols", protocolDir.name);
-                            protocolNode = ProtocolNode.openExisting(protocolPath);
-                            protocolNode.path = tgtPath;
-                            % 添加到项目
+                            protocolNode = ProtocolNode.openExisting(file);
+                            protocolNode.path = folder;
                             obj.addChild(protocolNode);
                         end
                     catch ME
@@ -262,16 +261,9 @@ classdef ProjectNode < BaseNode
             end
             
             % 创建协议目录
-            protocolsPath = fullfile(obj.path, 'Protocols');
-            if ~isfolder(protocolsPath)
-                mkdir(protocolsPath);
+            if ~isfolder(obj.protocolFolder)
+                mkdir(obj.protocolFolder);
             end
-        end
-
-        function loadAllProtocols(obj)
-            %LOADALLPROTOCOLS 加载项目中的所有协议
-            
-            obj.openChildNodes();
         end
     end
 end

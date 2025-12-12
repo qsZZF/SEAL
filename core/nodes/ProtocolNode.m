@@ -21,9 +21,12 @@ classdef ProtocolNode < BaseNode
         desc string
         sessionCount int32                 % 会话数量
 
-        channelInfoPath string
-        cortexInfoPath string
-        leadfieldInfoPath string
+        channelInfoFile string
+        cortexInfoFile string
+        leadfieldInfoFile string
+
+        infoFile string
+        sessionFolder string
     end
     
     methods
@@ -50,25 +53,22 @@ classdef ProtocolNode < BaseNode
             
             try
                 % 检查路径是文件夹还是文件
-                if isfolder(protocolPath)
-                    [~, protocolName, ~] = fileparts(protocolPath);
-                    protocolFile = fullfile(protocolPath, strcat(protocolName, '.mat'));
-                else
-                    protocolFile = protocolPath;
-                    [protocolPath, protocolName, ~] = fileparts(protocolPath);
-                end
-                
-                % 验证协议文件存在
-                if ~isfile(protocolFile)
-                    error('SEAL:ProtocolNode:NoProtocolFile', ...
-                        'No such protocol in path: %s', protocolPath);
+                if isfile(protocolPath)
+                    % 如果是文件路径，提取文件夹路径
+                    [protocolPath, ~, ~] = fileparts(protocolPath);
                 end
 
                 % 设置路径
                 obj.path = protocolPath;
                 
+                % 验证协议文件存在
+                if ~isfile(obj.infoFile)
+                    error('SEAL:ProtocolNode:NoProtocolFile', ...
+                        'No such protocol in path: %s', protocolPath);
+                end
+                
                 % 加载协议元数据
-                obj.protocolInfo = ProtocolInfo.openExisting(protocolFile);
+                obj.protocolInfo = ProtocolInfo.openExisting(obj.infoFile);
                 obj.isLoaded = false;
                 
                 % 递归打开子节点
@@ -119,7 +119,6 @@ classdef ProtocolNode < BaseNode
             
             try
                 
-                % 递归卸载所有子节点的数据
                 for i = 1:obj.childCount
                     if obj.children(i).isLoaded
                         obj.children(i).unload();
@@ -138,10 +137,7 @@ classdef ProtocolNode < BaseNode
                     obj.leadfieldNode.unload();
                 end
                 
-                % 标记为未加载
                 obj.isLoaded = false;
-                
-                fprintf('Protocol data unloaded: %s\n', obj.name);
                 
             catch ME
                 warning('SEAL:ProtocolNode:UnloadFailed', ...
@@ -154,8 +150,6 @@ classdef ProtocolNode < BaseNode
             try
                 
                 obj.createDirectoryStructure();
-                obj.protocolInfo.save(obj.path);
-                
                 % 递归保存所有子节点
                 for i = 1:obj.childCount
                     obj.children(i).save();
@@ -175,7 +169,7 @@ classdef ProtocolNode < BaseNode
                 end
                 
                 % 保存更新后的protocolInfo
-                obj.protocolInfo.save(obj.path);
+                obj.protocolInfo.save(obj.infoFile);
                 
             catch ME
                 error('SEAL:ProtocolNode:SaveFailed', ...
@@ -261,15 +255,24 @@ classdef ProtocolNode < BaseNode
             end
         end
 
-        function path = get.channelInfoPath(obj)
+        function path = get.infoFile(obj)
+            [~, name, ~] = fileparts(obj.path);
+            path = fullfile(obj.path, strcat(name, ".mat"));
+        end
+
+        function path = get.sessionFolder(obj)
+            path = fullfile(obj.path, "Sessions");
+        end
+
+        function path = get.channelInfoFile(obj)
             path = fullfile(obj.path, "channel_info.mat");
         end
 
-        function path = get.cortexInfoPath(obj)
+        function path = get.cortexInfoFile(obj)
             path = fullfile(obj.path, "cortex_info.mat");
         end
 
-        function path = get.leadfieldInfoPath(obj)
+        function path = get.leadfieldInfoFile(obj)
             path = fullfile(obj.path, "leadfield_info.mat");
         end
         
@@ -359,9 +362,6 @@ classdef ProtocolNode < BaseNode
             
             % 保存协议基本信息
             protocol.save();
-            
-            % 打开协议
-            protocol.open(protocolPath);
         end
     end
 
@@ -379,9 +379,8 @@ classdef ProtocolNode < BaseNode
             end
             
             % 创建会话目录
-            sessionsPath = fullfile(obj.path, 'Sessions');
-            if ~isfolder(sessionsPath)
-                mkdir(sessionsPath);
+            if ~isfolder(obj.sessionFolder)
+                mkdir(obj.sessionFolder);
             end
         end
         
@@ -400,39 +399,39 @@ classdef ProtocolNode < BaseNode
             %OPENSINGLETONNODES 打开单例节点
             
             % 打开通道节点
-            if ~isempty(obj.channelInfoPath) && isfile(obj.channelInfoPath)
+            if ~isempty(obj.channelInfoFile) && isfile(obj.channelInfoFile)
                 try
-                    obj.channelNode = ChannelNode.openExisting(obj.channelInfoPath);
+                    obj.channelNode = ChannelNode.openExisting(obj.channelInfoFile);
                     obj.channelNode.parent = obj;
                 catch ME
                     warning('SEAL:ProtocolNode:OpenChannelFailed', ...
                         'Failed to open channel node: %s. Error: %s', ...
-                        obj.channelInfoPath, ME.message);
+                        obj.channelInfoFile, ME.message);
                 end
             end
             
             % 打开皮层节点
-            if ~isempty(obj.cortexInfoPath) && isfile(obj.cortexInfoPath)
+            if ~isempty(obj.cortexInfoFile) && isfile(obj.cortexInfoFile)
                 try
-                    obj.cortexNode = CortexNode.openExisting(obj.cortexInfoPath);
+                    obj.cortexNode = CortexNode.openExisting(obj.cortexInfoFile);
                     obj.cortexNode.parent = obj;
                 catch ME
                     warning('SEAL:ProtocolNode:OpenCortexFailed', ...
                         'Failed to open cortex node: %s. Error: %s', ...
-                        obj.cortexInfoPath, ME.message);
+                        obj.cortexInfoFile, ME.message);
                 end
             end
             
             % 打开导联场节点
-            if ~isempty(obj.leadfieldInfoPath) && isfile(obj.leadfieldInfoPath)
+            if ~isempty(obj.leadfieldInfoFile) && isfile(obj.leadfieldInfoFile)
                 try
-                    fprintf('  Opening leadfield node from: %s\n', obj.leadfieldInfoPath);
-                    obj.leadfieldNode = LeadfieldNode.openExisting(obj.leadfieldInfoPath);
+                    fprintf('  Opening leadfield node from: %s\n', obj.leadfieldInfoFile);
+                    obj.leadfieldNode = LeadfieldNode.openExisting(obj.leadfieldInfoFile);
                     obj.leadfieldNode.parent = obj;
                 catch ME
                     warning('SEAL:ProtocolNode:OpenLeadfieldFailed', ...
                         'Failed to open leadfield node: %s. Error: %s', ...
-                        obj.leadfieldInfoPath, ME.message);
+                        obj.leadfieldInfoFile, ME.message);
                 end
             end
         end
@@ -441,14 +440,12 @@ classdef ProtocolNode < BaseNode
             %OPENSESSIONNODES 打开会话节点
             
             % 检查会话目录是否存在
-            sessionsPath = fullfile(obj.path, 'Sessions');
-            if ~isfolder(sessionsPath)
-                fprintf('  No Sessions directory found for protocol: %s\n', obj.name);
+            if ~isfolder(obj.sessionFolder)
                 return;
             end
             
             % 扫描会话目录
-            sessionDirs = dir(sessionsPath);
+            sessionDirs = dir(obj.sessionFolder);
             sessionCount = 0;
             
             for i = 1:length(sessionDirs)
@@ -459,27 +456,19 @@ classdef ProtocolNode < BaseNode
                     continue;
                 end
                 
-                sessionPath = fullfile(sessionsPath, sessionDir.name);
-                sessionFile = fullfile(sessionPath, strcat(sessionDir.name, '.mat'));
+                sessionFile = fullfile(obj.sessionFolder, sessionDir.name, strcat(sessionDir.name, '.mat'));
                 
                 % 检查是否存在会话文件
                 if ~isfile(sessionFile)
-                    fprintf('  No session info file found in: %s\n', sessionPath);
                     continue;
                 end
                 
                 try
-                    fprintf('  Opening session node from: %s\n', sessionPath);
-                    
-                    % 假设 SessionNode 有 openExisting 静态方法
-                    % 这里需要根据 SessionNode 的实现来调整
                     if exist('SessionNode', 'class')
-                        sessionNode = SessionNode.openExisting(sessionPath);
+                        sessionNode = SessionNode.openExisting(sessionFile);
                         sessionNode.parent = obj;
                         obj.addChild(sessionNode);
                         sessionCount = sessionCount + 1;
-                    else
-                        fprintf('    Warning: SessionNode class not available\n');
                     end
                     
                 catch ME
@@ -488,8 +477,6 @@ classdef ProtocolNode < BaseNode
                         sessionPath, ME.message);
                 end
             end
-            
-            fprintf('  Opened %d session(s) for protocol: %s\n', sessionCount, obj.name);
         end
         
         function node = getSingletonNode(obj, nodeType)

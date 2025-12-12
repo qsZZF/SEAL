@@ -50,18 +50,9 @@ classdef ProtocolInfo < handle
             % 输入:
             %   path - 保存路径
             
-            if path == ""
-                error('SEAL:ProtocolInfo:InvalidPath', ...
-                    'No valid protocol path specified.');
-            end
-            
-            if ~isfolder(path)
-                mkdir(path);
-            end
-            
-            % 保存协议元数据
+            checkDir(path);
             obj.updateModifiedDate();
-            saveData(fullfile(path, strcat(obj.name, '.mat')), obj);
+            saveData(path, obj);
         end
         
         %% 验证方法

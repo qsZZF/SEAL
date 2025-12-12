@@ -18,6 +18,8 @@ classdef DataNode < BaseNode
         name string
         data
         result
+
+        infoFile string
     end
     
     methods
@@ -54,7 +56,7 @@ classdef DataNode < BaseNode
         function save(obj)
             %SAVE 保存数据
             obj.createDirectoryStructure();
-            obj.dataInfo.save(fullfile(obj.path, strcat(obj.name, ".mat")));
+            obj.dataInfo.save(obj.infoFile);
         end
 
         function load(obj)
@@ -98,6 +100,10 @@ classdef DataNode < BaseNode
                 obj.load();
             end
             result = obj.res_cache;
+        end
+
+        function path = get.infoFile(obj)
+            path = fullfile(obj.path, strcat(obj.name, ".mat"));
         end
     
     end

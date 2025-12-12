@@ -51,26 +51,9 @@ classdef SessionInfo < handle
             % 输入:
             %   path - 保存路径
             
-            if path == ""
-                error('SEAL:SessionInfo:InvalidPath', ...
-                    'No valid session path specified.');
-            end
-            
-            if ~isfolder(path)
-                mkdir(path);
-            end
-            
-            % 更新修改时间
+            checkDir(path);
             obj.updateModifiedDate();
-            
-            % 生成文件名
-            filename = strcat(obj.name, '.mat');
-            filepath = fullfile(path, filename);
-            
-            % 保存会话信息
-            saveData(filepath, obj);
-            
-            fprintf('Session info saved: %s\n', filepath);
+            saveData(path, obj);
         end
     end
     

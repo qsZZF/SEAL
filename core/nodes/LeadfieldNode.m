@@ -16,6 +16,7 @@ classdef LeadfieldNode < BaseNode
         % 依赖属性
         name string
         data
+        infoFile string
     end
     
     methods
@@ -30,24 +31,22 @@ classdef LeadfieldNode < BaseNode
             %OPEN 打开数据
             
             % 检查路径是文件夹还是文件
-            if isfolder(path)
-                file = fullfile(path, "leadfield_info.mat");
-            else
-                file = path;
+            % 检查路径是文件夹还是文件
+            if isfile(path)
                 [path, name, ~] = fileparts(path);
-            end
-            
-            % 验证协议文件存在
-            if ~isfile(file)
-                error('SEAL:NoFile', ...
-                    'No such file in path: %s', path);
             end
 
             % 设置路径
             obj.path = path;
             
+            % 验证协议文件存在
+            if ~isfile(obj.infoFile)
+                error('SEAL:NoFile', ...
+                    'No such file in path: %s', obj.infoFile);
+            end
+            
             try
-                obj.leadfieldInfo = LeadfieldInfo.openExisting(file);
+                obj.leadfieldInfo = LeadfieldInfo.openExisting(obj.infoFile);
             catch ME
                 error('SEAL:LeadfieldNode:LoadFailed', ...
                     'Failed to open leadfield data: %s', ME.message);
@@ -58,7 +57,7 @@ classdef LeadfieldNode < BaseNode
         function save(obj)
             %SAVE 保存导联场数据
             obj.createDirectoryStructure();
-            obj.leadfieldInfo.save(fullfile(obj.path, "leadfield_info.mat"));
+            obj.leadfieldInfo.save(obj.infoFile);
         end
 
         function load(obj)
@@ -93,6 +92,10 @@ classdef LeadfieldNode < BaseNode
                 obj.load();
             end
             data = obj.cache;
+        end
+
+        function path = get.infoFile(obj)
+            path = fullfile(obj.path, "leadfield_info.mat");
         end
     
     end

@@ -59,12 +59,8 @@ classdef ChannelInfo < handle
         %% 文件操作方法
         function save(obj, path)
             %SAVE 保存通道信息
-            if path == ""
-                error('SEAL:ChannelInfo:InvalidPath', ...
-                    'No valid channel path specified.');
-            end
 
-            % 保存通道元数据
+            checkDir(path);
             obj.updateModifiedDate();
             saveData(path, obj);
         end

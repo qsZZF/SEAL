@@ -17,6 +17,8 @@ classdef SessionNode < BaseNode
         sessionType string
         desc string
         dataCount int32             % 总数据节点数量
+        
+        infoFile string
     end
     
     methods
@@ -38,25 +40,21 @@ classdef SessionNode < BaseNode
             
             try
                 % 检查路径是文件夹还是文件
-                if isfolder(sessionPath)
-                    [~, name, ~] = fileparts(sessionPath);
-                    sessionFile = fullfile(sessionPath, strcat(name, '.mat'));
-                else
-                    sessionFile = sessionPath;
+                if isfile(sessionPath)
                     [sessionPath, name, ~] = fileparts(sessionPath);
-                end
-                
-                % 验证会话文件存在
-                if ~isfile(sessionFile)
-                    error('SEAL:SessionNode:NoSessionFile', ...
-                        'No such session in path: %s', sessionPath);
                 end
 
                 % 设置路径
                 obj.path = sessionPath;
                 
+                % 验证会话文件存在
+                if ~isfile(obj.infoFile)
+                    error('SEAL:SessionNode:NoSessionFile', ...
+                        'No such session in path: %s', obj.infoFile);
+                end
+                
                 % 加载会话元数据
-                obj.sessionInfo = SessionInfo.openExisting(sessionFile);
+                obj.sessionInfo = SessionInfo.openExisting(obj.infoFile);
                 obj.isLoaded = false;
                 
                 % 递归打开子节点
@@ -116,7 +114,7 @@ classdef SessionNode < BaseNode
             
             try
                 obj.createDirectoryStructure();
-                obj.sessionInfo.save(obj.path);
+                obj.sessionInfo.save(obj.infoFile);
                 
                 % 递归保存所有子节点
                 for i = 1:obj.childCount
@@ -173,8 +171,6 @@ classdef SessionNode < BaseNode
             
             % 从子节点列表中移除
             obj.removeChild(dataNode);
-            
-            fprintf('Data node removed: %s\n', dataNode.name);
         end
         
         function dataNode = getDataNodeByName(obj, name)
@@ -200,6 +196,11 @@ classdef SessionNode < BaseNode
             else
                 name = "Unnamed Session";
             end
+        end
+
+        function path = get.infoFile(obj)
+            [~, name, ~] = fileparts(obj.path);
+            path = fullfile(obj.path, strcat(name, ".mat"));
         end
         
         function sessionType = get.sessionType(obj)

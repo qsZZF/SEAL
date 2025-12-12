@@ -16,6 +16,7 @@ classdef ChannelNode < BaseNode
         % 依赖属性
         name string
         data
+        infoFile string
     end
     
     methods
@@ -30,24 +31,21 @@ classdef ChannelNode < BaseNode
             %OPEN 打开数据
             
             % 检查路径是文件夹还是文件
-            if isfolder(path)
-                file = fullfile(path, "channel_info.mat");
-            else
-                file = path;
+            if isfile(path)
                 [path, name, ~] = fileparts(path);
-            end
-            
-            % 验证协议文件存在
-            if ~isfile(file)
-                error('SEAL:NoFile', ...
-                    'No such file in path: %s', path);
             end
 
             % 设置路径
             obj.path = path;
             
+            % 验证协议文件存在
+            if ~isfile(obj.infoFile)
+                error('SEAL:NoFile', ...
+                    'No such file in path: %s', obj.infoFile);
+            end
+            
             try
-                obj.channelInfo = ChannelInfo.openExisting(file);
+                obj.channelInfo = ChannelInfo.openExisting(obj.infoFile);
             catch ME
                 error('SEAL:ChannelNode:LoadFailed', ...
                     'Failed to open channel data: %s', ME.message);
@@ -57,7 +55,7 @@ classdef ChannelNode < BaseNode
         function save(obj)
             %SAVE 保存通道数据
             obj.createDirectoryStructure();
-            obj.channelInfo.save(fullfile(obj.path, "channel_info.mat"));
+            obj.channelInfo.save(obj.infoFile);
         end
 
         function load(obj)
@@ -92,6 +90,10 @@ classdef ChannelNode < BaseNode
                 obj.load();
             end
             data = obj.cache;
+        end
+
+        function path = get.infoFile(obj)
+            path = fullfile(obj.path, "channel_info.mat");
         end
     
     end

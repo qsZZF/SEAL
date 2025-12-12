@@ -59,12 +59,8 @@ classdef LeadfieldInfo < handle
         %% 文件操作方法
         function save(obj, path)
             %SAVE 保存导联场信息
-            if path == ""
-                error('SEAL:LeadfieldInfo:InvalidPath', ...
-                    'No valid leadfield path specified.');
-            end
-            
-            % 保存导联场元数据
+
+            checkDir(path);
             obj.updateModifiedDate();
             saveData(path, obj);
         end
