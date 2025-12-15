@@ -1,5 +1,5 @@
-classdef ChannelInfo < handle
-    %CHANNELINFO 通道信息管理类
+classdef ChanlocsInfo < handle
+    %CHANLOCSINFO 通道信息管理类
     % 负责通道数据的元数据管理和存储
 
     properties (SetAccess = public)
@@ -21,12 +21,12 @@ classdef ChannelInfo < handle
     end
     
     properties (Dependent)
-        channelCount int32     % 通道数量
+        chanlocsCount int32     % 通道数量
     end
     
     methods
-        function obj = ChannelInfo(name, dataPath, desc, metadata)
-            %CHANNELINFO 构造函数
+        function obj = ChanlocsInfo(name, dataPath, desc, metadata)
+            %CHANLOCSINFO 构造函数
             % 输入:
             %   name - 通道集合名称
             %   dataPath - 原始数据路径
@@ -75,32 +75,32 @@ classdef ChannelInfo < handle
     
     %% 静态方法
     methods (Static)
-        function channel = openExisting(channelPath)
+        function chanlocs = openExisting(chanlocsPath)
             %OPENEXISTING 打开现有通道信息
             % 输入:
-            %   channelPath - 通道文件路径
+            %   chanlocsPath - 通道文件路径
             % 输出:
-            %   channel - 加载的ChannelInfo对象
+            %   chanlocs - 加载的ChanlocsInfo对象
 
-            channelFile = channelPath;
+            chanlocsFile = chanlocsPath;
             
-            if ~isfile(channelFile)
-                error('SEAL:ChannelInfo:FileNotFound', ...
-                    'No such file exists: %s', channelFile);
+            if ~isfile(chanlocsFile)
+                error('SEAL:ChanlocsInfo:FileNotFound', ...
+                    'No such file exists: %s', chanlocsFile);
             end
             
             % 加载通道数据
-            channel = loadData(channelFile);
+            chanlocs = loadData(chanlocsFile);
             
             % 验证加载的对象类型
-            if ~isa(channel, 'ChannelInfo')
-                error('SEAL:ChannelInfo:InvalidFileFormat', ...
-                    'File does not contain a valid ChannelInfo object: %s', channelFile);
+            if ~isa(chanlocs, 'ChanlocsInfo')
+                error('SEAL:ChanlocsInfo:InvalidFileFormat', ...
+                    'File does not contain a valid ChanlocsInfo object: %s', chanlocsFile);
             end
         end
 
-        function channel = fromData(dataPath, varargin)
-            %FROMDATA 从通道数据文件直接创建ChannelInfo
+        function chanlocs = fromData(dataPath, varargin)
+            %FROMDATA 从通道数据文件直接创建ChanlocsInfo
             % 输入:
             %   dataPath - 通道数据文件路径
             %   varargin - 可选参数:
@@ -108,7 +108,7 @@ classdef ChannelInfo < handle
             %     'Description' - 通道描述
             %     'Metadata' - 额外元数据
             % 输出:
-            %   channel - ChannelInfo对象
+            %   chanlocs - ChanlocsInfo对象
             
             % 参数解析
             p = inputParser;
@@ -123,17 +123,17 @@ classdef ChannelInfo < handle
             % 如果未提供名称，使用文件名
             if isempty(p.Results.Name)
                 [~, name, ~] = fileparts(dataPath);
-                channelName = name;
+                chanlocsName = name;
             else
-                channelName = p.Results.Name;
+                chanlocsName = p.Results.Name;
             end
             
             % 从数据文件中提取元数据
             metadata = p.Results.Metadata;
             
-            % 创建ChannelInfo对象
-            channel = ChannelInfo(...
-                channelName, ...
+            % 创建ChanlocsInfo对象
+            chanlocs = ChanlocsInfo(...
+                chanlocsName, ...
                 dataPath, ...
                 p.Results.Description, ...
                 metadata);

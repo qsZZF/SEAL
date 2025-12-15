@@ -185,8 +185,6 @@ Projects/
 │   │   │   └── Sessions/
 │   │   │       └── Session1/
 │   │   │           ├── session_info.mat
-│   │   │           ├── OriginalData/
-│   │   │           │   └── data_info.mat
-│   │   │           └── FilteredData1/
-│   │   │               └── data_info.mat
+│   │   │           ├── data1.mat
+│   │   │           ├── data2.mat
 ```

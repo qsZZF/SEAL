@@ -106,6 +106,11 @@ classdef CortexNode < BaseNode
             cortex.cortexInfo = cortexInfo();
         end
 
+        function cortex = fromData(path)
+            cortex = CortexNode();
+            cortex.cortexInfo = CortexInfo.fromData(path);
+        end
+
         function cortex = openExisting(srcPath)
             %OPENCORTEX 打开现有皮层数据
             % 输入:

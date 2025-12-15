@@ -107,6 +107,11 @@ classdef LeadfieldNode < BaseNode
             leadfield.leadfieldInfo = leadfieldInfo();
         end
 
+        function leadfield = fromData(path)
+            leadfield = LeadfieldNode();
+            leadfield.leadfieldInfo = LeadfieldInfo.fromData(path);
+        end
+
         function leadfield = openExisting(srcPath)
             %OPENLEADFIELD 打开现有导联场数据
             % 输入:

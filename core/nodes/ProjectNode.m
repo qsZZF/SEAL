@@ -43,9 +43,8 @@ classdef ProjectNode < BaseNode
                 
                 % 检查项目文件是否存在
                 if ~isfile(obj.infoFile)
-                    warning('SEAL:ProjectNode:ProjectFileNotFound', ...
+                    error('SEAL:ProjectNode:ProjectFileNotFound', ...
                         'No such project exists: %s', obj.infoFile);
-                    return;
                 end
                 
                 % 加载项目元数据

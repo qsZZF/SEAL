@@ -73,7 +73,7 @@ classdef TestChannelNode < matlab.unittest.TestCase
             fprintf('\n--- 测试ChannelInfo创建 ---\n');
             
             % 创建ChannelInfo
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 testCase.testChannelName, ...
                 testCase.testDataPath, ...
                 "测试通道描述", ...
@@ -102,7 +102,7 @@ classdef TestChannelNode < matlab.unittest.TestCase
                 mkdir(savePath);
             end
             
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 'SavedChannel', ...
                 testCase.testDataPath, ...
                 '保存测试通道', ...
@@ -115,7 +115,7 @@ classdef TestChannelNode < matlab.unittest.TestCase
             testCase.verifyTrue(isfile(expectedFile), 'ChannelInfo文件应被创建');
             
             % 重新加载ChannelInfo
-            loadedChannelInfo = ChannelInfo.openExisting(expectedFile);
+            loadedChannelInfo = ChanlocsInfo.openExisting(expectedFile);
             
             % 验证加载的数据
             testCase.verifyEqual(loadedChannelInfo.name, "SavedChannel");
@@ -135,14 +135,14 @@ classdef TestChannelNode < matlab.unittest.TestCase
             testCase.createTestNodes();
             
             % 创建ChannelInfo
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 testCase.testChannelName, ...
                 testCase.testDataPath, ...
                 '通道节点测试', ...
                 struct('type', 'test'));
             
             % 创建ChannelNode
-            channelNode = ChannelNode();
+            channelNode = ChanlocsNode();
             channelNode.channelInfo = channelInfo;
             channelNode.path = fullfile(testCase.testProtocolPath, 'Channels', testCase.testChannelName);
             
@@ -170,13 +170,13 @@ classdef TestChannelNode < matlab.unittest.TestCase
             testCase.createTestNodes();
             
             % 创建并配置ChannelNode
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 'SaveTestChannel', ...
                 testCase.testDataPath, ...
                 '保存测试', ...
                 struct('sampling_rate', testCase.SAMPLING_RATE));
             
-            channelNode = ChannelNode();
+            channelNode = ChanlocsNode();
             channelNode.channelInfo = channelInfo;
             channelPath = fullfile(testCase.testProtocolPath, 'Channels', 'SaveTestChannel');
             channelNode.path = channelPath;
@@ -216,13 +216,13 @@ classdef TestChannelNode < matlab.unittest.TestCase
             saveData(dataFile, channelData);
             
             % 创建ChannelInfo和ChannelNode
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 'LoadTestChannel', ...
                 dataFile, ...
                 '加载测试', ...
                 struct('data_type', 'mat'));
             
-            channelNode = ChannelNode();
+            channelNode = ChanlocsNode();
             channelNode.channelInfo = channelInfo;
             channelNode.path = fullfile(testCase.testDataPath, 'LoadTestChannel');
             
@@ -278,7 +278,7 @@ classdef TestChannelNode < matlab.unittest.TestCase
                 mkdir(saveDir);
             end
             
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 'ExistingChannel', ...
                 dataFile, ...
                 '现有通道数据', ...
@@ -287,7 +287,7 @@ classdef TestChannelNode < matlab.unittest.TestCase
             channelInfo.save(saveDir);
             
             % 使用openExisting打开
-            channelNode = ChannelNode.openExisting(saveDir);
+            channelNode = ChanlocsNode.openExisting(saveDir);
             
             % 验证打开的节点
             testCase.verifyEqual(channelNode.name, "ExistingChannel");
@@ -320,14 +320,14 @@ classdef TestChannelNode < matlab.unittest.TestCase
             saveData(dataFile, integrationData);
             
             % 创建ChannelInfo
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 'IntegrationChannel', ...
                 dataFile, ...
                 '集成测试通道', ...
                 struct('project', testCase.testProjectName));
             
             % 创建ChannelNode并添加到协议
-            channelNode = ChannelNode();
+            channelNode = ChanlocsNode();
             channelNode.channelInfo = channelInfo;
             channelPath = fullfile(testCase.protocolNode.path, 'Channels', 'IntegrationChannel');
             channelNode.path = channelPath;
@@ -365,13 +365,13 @@ classdef TestChannelNode < matlab.unittest.TestCase
             saveData(dataFile, testData);
             
             % 创建ChannelNode
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 'DataPropertyChannel', ...
                 dataFile, ...
                 '数据属性测试', ...
                 struct());
             
-            channelNode = ChannelNode();
+            channelNode = ChanlocsNode();
             channelNode.channelInfo = channelInfo;
             channelNode.path = fullfile(testCase.testDataPath, 'DataPropertyChannel');
             
@@ -404,13 +404,13 @@ classdef TestChannelNode < matlab.unittest.TestCase
             fprintf('\n--- 测试ChannelNode无效数据路径 ---\n');
             
             % 创建ChannelInfo，指定不存在的数据路径
-            channelInfo = ChannelInfo.createNew(...
+            channelInfo = ChanlocsInfo.createNew(...
                 'InvalidPathChannel', ...
                 '/nonexistent/path/to/data.mat', ...
                 '无效路径测试', ...
                 struct());
             
-            channelNode = ChannelNode();
+            channelNode = ChanlocsNode();
             channelNode.channelInfo = channelInfo;
             channelNode.path = fullfile(testCase.testDataPath, 'InvalidPathChannel');
             
@@ -432,9 +432,9 @@ classdef TestChannelNode < matlab.unittest.TestCase
             
             fprintf('\n--- 测试从文件读取数据 ---\n');
 
-            channelInfo = ChannelInfo.fromData("E:\SEAL\Database\1\Chanlocs_60.mat");
+            channelInfo = ChanlocsInfo.fromData("E:\SEAL\Database\1\Chanlocs_60.mat");
             
-            channelNode = ChannelNode.fromData("E:\SEAL\Database\1\Chanlocs_60.mat");
+            channelNode = ChanlocsNode.fromData("E:\SEAL\Database\1\Chanlocs_60.mat");
         end
     end
     

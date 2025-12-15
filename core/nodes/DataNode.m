@@ -105,13 +105,17 @@ classdef DataNode < BaseNode
         function path = get.infoFile(obj)
             path = fullfile(obj.path, strcat(obj.name, ".mat"));
         end
-    
     end
 
     methods (Static)
         function data = fromInfo(dataInfo)
             data = DataNode();
             data.dataInfo = dataInfo();
+        end
+
+        function data = fromData(path)
+            data = DataNode();
+            data.dataInfo = DataInfo.fromData(path);
         end
 
         function data = openExisting(srcPath)

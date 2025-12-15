@@ -9,7 +9,7 @@ classdef ProtocolNode < BaseNode
     properties
         % 协议特定属性
         protocolInfo ProtocolInfo
-        channelNode ChannelNode           % 通道节点
+        chanlocsNode ChanlocsNode           % 通道节点
         cortexNode CortexNode             % 皮层节点
         leadfieldNode LeadfieldNode       % 导联场节点
     end
@@ -21,7 +21,7 @@ classdef ProtocolNode < BaseNode
         desc string
         sessionCount int32                 % 会话数量
 
-        channelInfoFile string
+        chanlocsInfoFile string
         cortexInfoFile string
         leadfieldInfoFile string
 
@@ -37,7 +37,7 @@ classdef ProtocolNode < BaseNode
             obj = obj@BaseNode();
             
             % 初始化属性
-            obj.channelNode = ChannelNode.empty;
+            obj.chanlocsNode = ChanlocsNode.empty;
             obj.cortexNode = CortexNode.empty;
             obj.leadfieldNode = LeadfieldNode.empty;
         end
@@ -88,8 +88,8 @@ classdef ProtocolNode < BaseNode
             end
             
             try
-                if ~isempty(obj.channelNode) && ~obj.channelNode.isLoaded
-                    obj.channelNode.load();
+                if ~isempty(obj.chanlocsNode) && ~obj.chanlocsNode.isLoaded
+                    obj.chanlocsNode.load();
                 end
                 
                 if ~isempty(obj.cortexNode) && ~obj.cortexNode.isLoaded
@@ -125,8 +125,8 @@ classdef ProtocolNode < BaseNode
                     end
                 end
                 
-                if ~isempty(obj.channelNode) && obj.channelNode.isLoaded
-                    obj.channelNode.unload();
+                if ~isempty(obj.chanlocsNode) && obj.chanlocsNode.isLoaded
+                    obj.chanlocsNode.unload();
                 end
                 
                 if ~isempty(obj.cortexNode) && obj.cortexNode.isLoaded
@@ -156,8 +156,8 @@ classdef ProtocolNode < BaseNode
                 end
                 
                 % 保存单例节点
-                if ~isempty(obj.channelNode)
-                    obj.channelNode.save();
+                if ~isempty(obj.chanlocsNode)
+                    obj.chanlocsNode.save();
                 end
                 
                 if ~isempty(obj.cortexNode)
@@ -188,11 +188,11 @@ classdef ProtocolNode < BaseNode
             obj.removeChild(sessionNode);
         end
         
-        function setChannelNode(obj, channelNode)
-            %SETCHANNELNODE 设置通道节点
+        function setChanlocsNode(obj, chanlocsNode)
+            %SETCHANLOCSNODE 设置通道节点
             % 移除现有的通道节点
-            obj.channelNode = channelNode;
-            channelNode.parent = obj;
+            obj.chanlocsNode = chanlocsNode;
+            chanlocsNode.parent = obj;
         end
         
         function setCortexNode(obj, cortexNode)
@@ -209,13 +209,13 @@ classdef ProtocolNode < BaseNode
             leadfieldNode.parent = obj;
         end
 
-        function node = openChannelFromData(obj, dataPath)
-            channelInfo = ChannelInfo.fromData(dataPath);
-            obj.channelNode = ChannelNode.fromInfo(channelInfo);
-            obj.channelNode.path = obj.path;
-            obj.channelNode.parent = obj;
-            obj.channelNode.save();
-            node = obj.channelNode;
+        function node = openChanlocsFromData(obj, dataPath)
+            chanlocsInfo = ChanlocsInfo.fromData(dataPath);
+            obj.chanlocsNode = ChanlocsNode.fromInfo(chanlocsInfo);
+            obj.chanlocsNode.path = obj.path;
+            obj.chanlocsNode.parent = obj;
+            obj.chanlocsNode.save();
+            node = obj.chanlocsNode;
         end
 
         function node = openCortexFromData(obj, dataPath)
@@ -234,7 +234,14 @@ classdef ProtocolNode < BaseNode
             obj.leadfieldNode.parent = obj;
             obj.leadfieldNode.save();
             node = obj.leadfieldNode;
-        end
+       end
+
+       function node = openDataFromData(obj, dataPath)
+            sessionNode = SessionNode.createNew(findAvailableName(obj.sessionFolder, "Session #"), obj.sessionFolder);
+            node = sessionNode.openDataFromData(dataPath);
+            obj.addChild(sessionNode);
+            sessionNode.save();
+       end
         
         %% 依赖属性get方法
         function count = get.sessionCount(obj)
@@ -264,8 +271,8 @@ classdef ProtocolNode < BaseNode
             path = fullfile(obj.path, "Sessions");
         end
 
-        function path = get.channelInfoFile(obj)
-            path = fullfile(obj.path, "channel_info.mat");
+        function path = get.chanlocsInfoFile(obj)
+            path = fullfile(obj.path, "chanlocs_info.mat");
         end
 
         function path = get.cortexInfoFile(obj)
@@ -399,14 +406,14 @@ classdef ProtocolNode < BaseNode
             %OPENSINGLETONNODES 打开单例节点
             
             % 打开通道节点
-            if ~isempty(obj.channelInfoFile) && isfile(obj.channelInfoFile)
+            if ~isempty(obj.chanlocsInfoFile) && isfile(obj.chanlocsInfoFile)
                 try
-                    obj.channelNode = ChannelNode.openExisting(obj.channelInfoFile);
-                    obj.channelNode.parent = obj;
+                    obj.chanlocsNode = ChanlocsNode.openExisting(obj.chanlocsInfoFile);
+                    obj.chanlocsNode.parent = obj;
                 catch ME
-                    warning('SEAL:ProtocolNode:OpenChannelFailed', ...
-                        'Failed to open channel node: %s. Error: %s', ...
-                        obj.channelInfoFile, ME.message);
+                    warning('SEAL:ProtocolNode:OpenChanlocsFailed', ...
+                        'Failed to open chanlocs node: %s. Error: %s', ...
+                        obj.chanlocsInfoFile, ME.message);
                 end
             end
             
@@ -456,7 +463,7 @@ classdef ProtocolNode < BaseNode
                     continue;
                 end
                 
-                sessionFile = fullfile(obj.sessionFolder, sessionDir.name, strcat(sessionDir.name, '.mat'));
+                sessionFile = fullfile(obj.sessionFolder, sessionDir.name, "session_info.mat");
                 
                 % 检查是否存在会话文件
                 if ~isfile(sessionFile)
@@ -483,8 +490,8 @@ classdef ProtocolNode < BaseNode
             %GETSINGLETONNODE 获取单例类型节点
             node = [];
             switch nodeType
-                case 'ChannelNode'
-                    node = obj.channelNode;
+                case 'ChanlocsNode'
+                    node = obj.chanlocsNode;
                 case 'CortexNode'
                     node = obj.cortexNode;
                 case 'LeadfieldNode'
