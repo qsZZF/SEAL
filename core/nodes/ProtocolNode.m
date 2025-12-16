@@ -27,6 +27,9 @@ classdef ProtocolNode < BaseNode
 
         infoFile string
         sessionFolder string
+
+        headModelType string
+        orientation
     end
     
     methods
@@ -295,6 +298,14 @@ classdef ProtocolNode < BaseNode
                 protocolType = "";
             end
         end
+
+        function headModelType = get.headModelType(obj)
+            headModelType = obj.leadfieldNode.headModelType;
+        end
+
+        function ori = get.orientation(obj)
+            ori = obj.leadfieldNode.orientation;
+        end
         
         function desc = get.desc(obj)
             if ~isempty(obj.protocolInfo)
@@ -302,6 +313,13 @@ classdef ProtocolNode < BaseNode
             else
                 desc = "";
             end
+        end
+
+        function metadata = getMetadata(obj)
+            metadata =  obj.getMetadata@BaseNode();
+            metadata = [metadata;
+                "Head Model Type", string(obj.headModelType);
+                "Orientation", mat2str(obj.orientation)];
         end
         
         %% 重写父类方法
