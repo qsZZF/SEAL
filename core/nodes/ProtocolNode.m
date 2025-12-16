@@ -176,6 +176,11 @@ classdef ProtocolNode < BaseNode
                     'Failed to save protocol: %s', ME.message);
             end
         end
+
+        function deleteFromDisk(obj)
+            rmdir(obj.path, 's');
+        end
+
         
         %% 子节点管理方法
         function addSession(obj, sessionNode)

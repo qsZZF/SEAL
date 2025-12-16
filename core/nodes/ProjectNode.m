@@ -95,6 +95,10 @@ classdef ProjectNode < BaseNode
             obj.isLoaded = false;
         end
 
+        function deleteFromDisk(obj)
+            rmdir(obj.path, 's');
+        end
+
         function rename(obj, newName)
 %           等待进一步实现，这个功能是否要加入待定
             oldPath = obj.path;

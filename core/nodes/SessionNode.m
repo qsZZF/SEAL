@@ -126,6 +126,10 @@ classdef SessionNode < BaseNode
                     'Failed to save session: %s', ME.message);
             end
         end
+
+        function deleteFromDisk(obj)
+            rmdir(obj.path, 's');
+        end
         
         %% 数据节点管理
         function addDataNode(obj, dataNode)

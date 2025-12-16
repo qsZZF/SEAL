@@ -79,6 +79,10 @@ classdef ChanlocsNode < BaseNode
             obj.cache = [];
             obj.isLoaded = false;
         end
+
+        function deleteFromDisk(obj)
+            delete(obj.infoFile);
+        end
         
         %% 依赖属性get方法
         function chanlocsName = get.name(obj)

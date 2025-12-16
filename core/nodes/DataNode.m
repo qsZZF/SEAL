@@ -20,6 +20,9 @@ classdef DataNode < BaseNode
         result
 
         infoFile string
+
+        size
+        srate
     end
     
     methods
@@ -82,10 +85,22 @@ classdef DataNode < BaseNode
             obj.data_cache = [];
             obj.isLoaded = false;
         end
+
+        function deleteFromDisk(obj)
+            delete(obj.infoFile);
+        end
         
         %% 依赖属性get方法
         function dataName = get.name(obj)
             dataName = obj.dataInfo.name;
+        end
+
+        function rsize = get.size(obj)
+            rsize = obj.dataInfo.size;
+        end
+
+        function srate = get.srate(obj)
+            srate = obj.dataInfo.srate;
         end
         
         function data = get.data(obj)
@@ -104,6 +119,13 @@ classdef DataNode < BaseNode
 
         function path = get.infoFile(obj)
             path = fullfile(obj.path, strcat(obj.name, ".mat"));
+        end
+
+        function metadata = getMetadata(obj)
+            metadata =  obj.getMetadata@BaseNode();
+            metadata = [metadata;
+                "Size", mat2str(obj.size);
+                "Sampling Rate", string(obj.srate)];
         end
     end
 
