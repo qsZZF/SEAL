@@ -101,19 +101,23 @@ if isEmptyValues
     heady = [[ry(:)' ry(1) ]*(hin+hwidth)  [ry(:)' ry(1)]*hin];
     patch(h,headx,heady,ones(size(headx)),HEADCOLOR,'edgecolor',HEADCOLOR,'hittest','off');
 
+    sf    = headrad/plotrad;
+    offset = hwidth / sf;
 
-    base  = headrad-.0046;
-    basex = 0.18*headrad;   % nose width
-    tip   = 1.15*headrad;
-    tiphw = .04*headrad;    % nose tip half width
-    tipr  = .01*headrad;    % nose tip rounding
-    q = .04;                % ear lengthening
+    % Plot ears and nose
+    base  = headrad-.0046+offset*7;
+    basex = 0.18*headrad;                   % nose width
+    tip   = 1.15*headrad+offset*7;
+    tiphw = .04*headrad;                    % nose tip half width
+    tipr  = .01*headrad;                    % nose tip rounding
+    q = .04; % ear lengthening
     EarX  = [.497-.005  .510  .518  .5299 .5419  .54    .547   .532   .510   .489-.005]; % headrad = 0.5
     EarY  = [q+.0555 q+.0775 q+.0783 q+.0746 q+.0555 -.0055 -.0932 -.1313 -.1384 -.1199];
-    sf    = headrad/plotrad;  
+
+    EarX = EarX + offset*8;
 
     plot3(h,[basex;tiphw;0;-tiphw;-basex]*sf,[base;tip-tipr;tip;tip-tipr;base]*sf, ...
-          2*ones(5,1),'Color',HEADCOLOR,'LineWidth',HLINEWIDTH,'hittest','off');                 % nose
+        2*ones(5,1),'Color',HEADCOLOR,'LineWidth',HLINEWIDTH,'hittest','off');                 % nose
     plot3(h,EarX*sf,EarY*sf,2*ones(size(EarX)),'color',HEADCOLOR,'LineWidth',HLINEWIDTH,'hittest','off')    % left ear
     plot3(h,-EarX*sf,EarY*sf,2*ones(size(EarY)),'color',HEADCOLOR,'LineWidth',HLINEWIDTH,'hittest','off')   % right ear
 
@@ -202,16 +206,20 @@ headx = [[rx(:)' rx(1) ]*(hin+hwidth)  [rx(:)' rx(1)]*hin];
 heady = [[ry(:)' ry(1) ]*(hin+hwidth)  [ry(:)' ry(1)]*hin];
 patch(h,headx,heady,ones(size(headx)),HEADCOLOR,'edgecolor',HEADCOLOR,'hittest','off'); hold on
 
+sf    = headrad/plotrad;
+offset = hwidth / sf; 
+
 % Plot ears and nose
-base  = headrad-.0046;
+base  = headrad-.0046+offset;
 basex = 0.18*headrad;                   % nose width
-tip   = 1.15*headrad;
+tip   = 1.15*headrad+offset;
 tiphw = .04*headrad;                    % nose tip half width
 tipr  = .01*headrad;                    % nose tip rounding
 q = .04; % ear lengthening
 EarX  = [.497-.005  .510  .518  .5299 .5419  .54    .547   .532   .510   .489-.005]; % headrad = 0.5
 EarY  = [q+.0555 q+.0775 q+.0783 q+.0746 q+.0555 -.0055 -.0932 -.1313 -.1384 -.1199];
-sf    = headrad/plotrad;
+
+EarX = EarX + offset;
 
 plot3(h,[basex;tiphw;0;-tiphw;-basex]*sf,[base;tip-tipr;tip;tip-tipr;base]*sf, ...
       2*ones(5,1),'Color',HEADCOLOR,'LineWidth',HLINEWIDTH,'hittest','off');

@@ -190,6 +190,29 @@ if ~isempty(SourceData)
         'facecolor', 'interp');
 end
 
+
+if ~isempty(SourceData)
+    % 1. 将计算好的 colormap 应用到当前的坐标轴
+    colormap(handles.axes, colorMap);
+
+    % 2. 设置颜色范围 (兼容旧版 MATLAB 使用 caxis, 新版使用 clim)
+   
+        clim(handles.axes, CLim);
+   
+
+    % 3. 生成 Colorbar
+    hBar = colorbar(handles.axes);
+
+    % 4. 美化 Colorbar (适应黑色背景)
+    set(hBar, ...
+        'Location', 'eastoutside', ... % 位置在右侧外边
+        'Color', [1 1 1], ...          % 刻度文字颜色设为白色
+        'FontSize', 10, ...            % 字体大小
+        'Box', 'off');                 % 去除边框
+
+    % 5. (可选) 保存句柄以便后续操作
+    handles.hColorbar = hBar;
+end
 bind3DInteraction(handles.h, handles.axes);
 
 end
