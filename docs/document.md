@@ -13,6 +13,29 @@ SEAL 是一个用于 MEG/EEG 源成像分析的 MATLAB 平台，采用模块化�
 
 ### 2026/01/31
 
+#### 项目结构重组
+
+完成了项目结构的重组，提高了代码组织性：
+
+1. **目录结构优化**:
+   - 将 `GUI/` 重命名为 `app/`
+   - 将 `CoreFunctions/` 重命名为 `core/functional/`
+   - 将 `models/` 移动到 `core/infos/`
+   - 将 `core/nodes/` 保持不变
+   - 将 `Database/` 重命名为 `sample/data/`
+   - 将 `External/` 重命名为 `external/`
+   - 将 `utilities/` 保持不变
+   - 将文档文件移到 `docs/` 目录
+
+2. **新增目录**:
+   - `docs/`: 存放所有文档文件
+   - `sample/`: 存放示例数据和项目
+   - `sample/data/`: 示例数据集
+   - `sample/proj/`: 示例项目
+
+3. **新增文档**:
+   - `coding_standards.md`: 编码规范文档
+
 #### 节点系统重构
 
 完成了核心节点系统的重构，采用面向对象设计：
@@ -91,7 +114,7 @@ SEAL 是一个用于 MEG/EEG 源成像分析的 MATLAB 平台，采用模块化�
 
     原始写法中，创建项目的默认路径为`app.ProjectPath`，即上一个创建的项目的根目录，但实际交互应当是上一次创建项目位置，修正为上一次创建的项目的根目录的父级，此外默认项目名未作重复检查，已加入。
 
-    ![alt text](./docImg/image.png)
+    ![alt text](../docImg/image.png)
 
 2. New Protocol
 
@@ -111,21 +134,21 @@ SEAL 是一个用于 MEG/EEG 源成像分析的 MATLAB 平台，采用模块化�
 
 ### 顶层模块与职责
 
-- `GUI/`：包含多个 MATLAB App (`*.mlapp`)`)，主页面为 `SEAL_GUI.mlapp`、`SEAL_Preprocess.mlapp`、`SEAL_showCortex.mlapp` 等。负责用户交互、参数输入和可视化。
+- `app/`：包含多个 MATLAB App (`*.mlapp`)`)，主页面为 `SEAL_GUI.mlapp`、`SEAL_Preprocess.mlapp`、`SEAL_showCortex.mlapp` 等。负责用户交互、参数输入和可视化。
 
-- `Algorithms/`：实现源定位算法`seal_MNE.m`、`seal_LORETA.m`、`seal_sLORETA.m`、`seal_eLORETA.m`、`seal_LAURA.m`、`seal_dSPM.m`，时空方法 `seal_BlockChampagne.m`、`seal_STARTS.m`、`seal_uSTAR.m`。接受预处理数据与前向模型，输出源估计。
+- `algorithms/`：实现源定位算法`seal_MNE.m`、`seal_LORETA.m`、`seal_sLORETA.m`、`seal_eLORETA.m`、`seal_LAURA.m`、`seal_dSPM.m`，时空方法 `seal_BlockChampagne.m`、`seal_STARTS.m`、`seal_uSTAR.m`。接受预处理数据与前向模型，输出源估计。
 
-- `CoreFunctions/`：通用函数库，数据导入 `seal_importer.m`、绘图 `PlotSource.m`、网格平滑工具 `tess_smooth.m`、`getSmoothedVertices.m` 等，以及滤波设计脚本`Datal/` 子目录。
+- `core/functional/`：通用函数库，数据导入 `sealImporter.m`、绘图 `PlotSource.m`、网格平滑工具 `tessSmooth.m`、`getSmoothedVertices.m` 等，以及滤波设计脚本`filter/` 子目录。
 
-- `Utilities/`：预处理工具集合，如 `applyDownsample_resample.m`、`applyRereference.m`、`run_interpolation.m`、`run_laplacian.m` 等。
+- `utilities/`：预处理工具集合，如 `applyDownsampleResample.m`、`applyRereference.m`、`runInterpolation.m`、`runLaplacian.m` 等。
 
-- `Database/`：示例数据与前向模型`LeadField_*.mat`、`Cortex_*.mat`、`ERPset.mat`，按项目/协议分目录存放示例输入与结果。
+- `sample/`：示例数据与前向模型`LeadField_*.mat`、`Cortex_*.mat`、`ERPset.mat`，按项目/协议分目录存放示例输入与结果。
 
-- `External/`：第三方依赖代码例如 `eeglab/` 和 `Newtopoplot1.1/`提供 ICA、topoplot 等功能扩展。
+- `external/`：第三方依赖代码例如 `eeglab/` 和 `Newtopoplot1.1/`提供 ICA、topoplot 等功能扩展。
 
 - `core/nodes/`：核心节点系统，包含所有节点类定义。
 
-- `models/`：数据模型类，包含所有 Info 类定义。
+- `core/infos/`：数据模型类，包含所有 Info 类定义。
 
 ### 典型数据与文件格式
 
@@ -139,21 +162,21 @@ SEAL 是一个用于 MEG/EEG 源成像分析的 MATLAB 平台，采用模块化�
 
 ### 高层运行流程（数据流）
 
-1. 启动 GUI（`GUI/SEAL_GUI.mlapp`）。
+1. 启动 GUI（`app/SEAL_GUI.mlapp`）。
 
-2. 导入数据（`CoreFunctions/seal_importer.m`），统一通道顺序与元数据。
+2. 导入数据（`core/functional/sealImporter.m`），统一通道顺序与元数据。
 
-3. 预处理（`Utilities/`）：滤波、降采样、重参考、插值、拉普拉斯等。
+3. 预处理（`core/functional/`）：滤波、降采样、重参考、插值、拉普拉斯等。
 
-4. 加载前向模型（`Database/`），对齐通道。
+4. 加载前向模型（`sample/`），对齐通道。
 
-5. 运行算法（`Algorithms/`）计算源空间时间序列或统计图。
+5. 运行算法（`algorithms/`）计算源空间时间序列或统计图。
 
-6. 后处理与可视化（`CoreFunctions/PlotSource.m`、`GUI/SEAL_showCortex*`），保存结果到 `Project 2/` 等目录。
+6. 后处理与可视化（`core/functional/PlotSource.m`、`app/SEAL_showCortex*`），保存结果到 `sample/proj/` 等目录。
 
 ### 主要入口与调用契约
 
-- GUI 主入口：`GUI/SEAL_GUI.mlapp`（用于交互式操作）。
+- GUI 主入口：`app/SEAL_GUI.mlapp`（用于交互式操作）。
 
 ### 依赖与运行环境
 
@@ -264,7 +287,8 @@ EEGLAB工具，提供ICA等功能。
 
 项目包含以下文档：
 
-- **README.md**: 项目说明
+- **README**.md**: 项目说明
+- **coding_standards.md**: 编码规范
 - **data_dict.md**: 数据字典
 - **document.md**: 项目文档（本文件）
 - **proj_structure.md**: 项目结构说明
@@ -279,6 +303,8 @@ EEGLAB工具，提供ICA等功能。
 - 常量：使用大写字母和下划线，例如 MAX_SIZE
 - 类名：使用帕斯卡命名法，即每个单词首字母大写，例如 MyClass，NodeData
 - 文件名：通常与文件中的主要函数或类名相同，使用驼峰
+
+详细的编码规范请参考 [coding_standards.md](coding_standards.md)。
 
 ### 设计模式
 
@@ -298,12 +324,12 @@ EEGLAB工具，提供ICA等功能。
 
 #### 添加新算法
 
-1. 在 `Algorithms/` 目录下创建新算法文件
+1. 在 `algorithms/` 目录下创建新算法文件
 2. 实现算法逻辑
 3. 在GUI中添加算法选择界面
 
 #### 添加新预处理功能
 
-1. 在 `CoreFunctions/Utilities/` 目录下创建新功能文件
+1. 在 `core/functional/` 目录下创建新功能文件
 2. 实现功能逻辑
 3. 在GUI中添加预处理界面
