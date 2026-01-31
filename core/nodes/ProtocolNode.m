@@ -300,11 +300,19 @@ classdef ProtocolNode < BaseNode
         end
 
         function headModelType = get.headModelType(obj)
-            headModelType = obj.leadfieldNode.headModelType;
+            if ~isempty(obj.leadfieldNode)
+                headModelType = obj.leadfieldNode.headModelType;
+            else
+                headModelType = "null";
+            end
         end
 
         function ori = get.orientation(obj)
-            ori = obj.leadfieldNode.orientation;
+            if ~isempty(obj.leadfieldNode)
+                ori = obj.leadfieldNode.orientation;
+            else
+                ori = [];
+            end
         end
         
         function desc = get.desc(obj)

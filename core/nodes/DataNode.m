@@ -117,6 +117,10 @@ classdef DataNode < BaseNode
             result = obj.res_cache;
         end
 
+        function setResultPath(obj, path)
+            obj.dataInfo.resultPath = path;
+        end
+
         function path = get.infoFile(obj)
             path = fullfile(obj.path, strcat(obj.name, ".mat"));
         end
