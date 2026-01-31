@@ -66,7 +66,7 @@ classdef SessionInfo < handle
     
     %% 静态方法
     methods (Static)
-        function session = createNew(name, type, desc, varargin)
+        function session = createNew(name, varargin)
             %CREATENEW 创建新会话
             % 输入:
             %   name - 会话名称
@@ -82,16 +82,13 @@ classdef SessionInfo < handle
             
             p = inputParser;
             addRequired(p, 'name', Validators.isText);
-            addRequired(p, 'type', Validators.isText);
-            addRequired(p, 'desc', Validators.isText);
             
-            parse(p, name, type, desc, varargin{:});
+            parse(p, name);
             
             % 创建SessionInfo对象
             session = SessionInfo(...
-                p.Results.name, ...
-                p.Results.type, ...
-                p.Results.desc);
+                p.Results.name ...
+                );
             
         end
         

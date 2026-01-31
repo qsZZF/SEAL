@@ -45,7 +45,7 @@ function defaultName = findAvailableName(basePath, namePattern)
         match = regexp(dirNames{i}, regexPattern, 'tokens', 'once');
         if ~isempty(match)
             matchingDirs{end+1} = dirNames{i};
-            numbers(end+1) = round(str2double(match{1}));
+            numbers(end+1) = round(str2double(match{2}));
         end
     end
     

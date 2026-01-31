@@ -1,14 +1,14 @@
-classdef ChannelNode < BaseNode
-    %CHANNELNODE 通道节点
+classdef ChanlocsNode < BaseNode
+    %CHANLOCSNODE 通道节点
     % 管理协议的通道信息，包含通道名称、位置等元数据
     
     properties (Constant)
-        type = "ChannelNode"  % 节点类型标识符
+        type = "ChanlocsNode"  % 节点类型标识符
     end
     
     properties
         % 通道特定属性
-        channelInfo ChannelInfo
+        chanlocsInfo ChanlocsInfo
         cache
     end
     
@@ -20,8 +20,8 @@ classdef ChannelNode < BaseNode
     end
     
     methods
-        function obj = ChannelNode()
-            %CHANNELNODE 构造函数
+        function obj = ChanlocsNode()
+            %CHANLOCSNODE 构造函数
             
             % 调用父类构造函数
             obj = obj@BaseNode();
@@ -45,17 +45,17 @@ classdef ChannelNode < BaseNode
             end
             
             try
-                obj.channelInfo = ChannelInfo.openExisting(obj.infoFile);
+                obj.chanlocsInfo = ChanlocsInfo.openExisting(obj.infoFile);
             catch ME
-                error('SEAL:ChannelNode:LoadFailed', ...
-                    'Failed to open channel data: %s', ME.message);
+                error('SEAL:ChanlocsNode:LoadFailed', ...
+                    'Failed to open chanlocs data: %s', ME.message);
             end
         end
 
         function save(obj)
             %SAVE 保存通道数据
             obj.createDirectoryStructure();
-            obj.channelInfo.save(obj.infoFile);
+            obj.chanlocsInfo.save(obj.infoFile);
         end
 
         function load(obj)
@@ -65,10 +65,10 @@ classdef ChannelNode < BaseNode
             end
             
             % 加载通道元数据
-            if ~isempty(obj.channelInfo)
-                [~, name, ~] = fileparts(obj.channelInfo.dataPath);
-                if isfile(obj.channelInfo.dataPath)
-                    obj.cache = loadData(obj.channelInfo.dataPath);
+            if ~isempty(obj.chanlocsInfo)
+                [~, name, ~] = fileparts(obj.chanlocsInfo.dataPath);
+                if isfile(obj.chanlocsInfo.dataPath)
+                    obj.cache = loadData(obj.chanlocsInfo.dataPath);
                     obj.isLoaded = true;
                 end
             end
@@ -79,10 +79,14 @@ classdef ChannelNode < BaseNode
             obj.cache = [];
             obj.isLoaded = false;
         end
+
+        function deleteFromDisk(obj)
+            delete(obj.infoFile);
+        end
         
         %% 依赖属性get方法
-        function channelName = get.name(obj)
-            channelName = obj.channelInfo.name;
+        function chanlocsName = get.name(obj)
+            chanlocsName = obj.chanlocsInfo.name;
         end
         
         function data = get.data(obj)
@@ -93,28 +97,33 @@ classdef ChannelNode < BaseNode
         end
 
         function path = get.infoFile(obj)
-            path = fullfile(obj.path, "channel_info.mat");
+            path = fullfile(obj.path, "chanlocs_info.mat");
         end
     
     end
 
     methods (Static)
-        function channel = fromInfo(channelInfo)
-            channel = ChannelNode();
-            channel.channelInfo = channelInfo();
+        function chanlocs = fromInfo(chanlocsInfo)
+            chanlocs = ChanlocsNode();
+            chanlocs.chanlocsInfo = chanlocsInfo;
         end
 
-        function channel = openExisting(srcPath)
-            %OPENCHANNEL 打开现有通道数据
+        function chanlocs = fromData(path)
+            chanlocs = ChanlocsNode();
+            chanlocs.chanlocsInfo = ChanlocsInfo.fromData(path);
+        end
+
+        function chanlocs = openExisting(srcPath)
+            %OPENCHANLOCS 打开现有通道数据
             % 输入:
             %   srcPath - 通道文件路径或通道文件夹路径
             %   parentProtocol - 父协议节点
             
             % 创建通道节点
-            channel = ChannelNode();
+            chanlocs = ChanlocsNode();
 
             % 加载通道数据
-            channel.open(getmat(srcPath));
+            chanlocs.open(getmat(srcPath));
         end
     end
 

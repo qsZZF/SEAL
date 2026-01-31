@@ -6,6 +6,8 @@ classdef DataInfo < handle
         % 基本信息
         name string = "Untitled"
         desc string = ""
+        size int64
+        srate int64
         
         % 数据地址
         dataPath string
@@ -138,12 +140,22 @@ classdef DataInfo < handle
             metadata = p.Results.Metadata;
             
             % 创建DataInfo对象
-            data = DataInfo(...
-                dataName, ...
-                dataPath, ...
-                "", ...
-                p.Results.Description, ...
-                metadata);
+            try
+                data = DataInfo(...
+                    dataName, ...
+                    dataPath, ...
+                    "", ...
+                    p.Results.Description, ...
+                    metadata);
+                
+                loadedData = loadData(dataPath);
+
+                data.size = size(loadedData.data);
+                data.srate = loadedData.srate;
+            catch ME
+                error('SEAL:DataInfo:FileCorrupted', ...
+                    'File corrupted: %s', dataFile);
+            end
         end
 
         function meta = extractMetadata(dataPath)

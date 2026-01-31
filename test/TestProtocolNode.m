@@ -376,8 +376,8 @@ classdef TestProtocolNode < matlab.unittest.TestCase
                 testCase.testProjectPath);
             
             % 创建通道节点
-            channelNode = ChannelNode();
-            channelInfo = ChannelInfo('TestChannel', testCase.testChannelPath, '测试通道');
+            channelNode = ChanlocsNode();
+            channelInfo = ChanlocsInfo('TestChannel', testCase.testChannelPath, '测试通道');
             channelNode.channelInfo = channelInfo;
             
             % 设置通道节点

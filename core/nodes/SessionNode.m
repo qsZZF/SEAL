@@ -126,6 +126,10 @@ classdef SessionNode < BaseNode
                     'Failed to save session: %s', ME.message);
             end
         end
+
+        function deleteFromDisk(obj)
+            rmdir(obj.path, 's');
+        end
         
         %% 数据节点管理
         function addDataNode(obj, dataNode)
@@ -200,7 +204,7 @@ classdef SessionNode < BaseNode
 
         function path = get.infoFile(obj)
             [~, name, ~] = fileparts(obj.path);
-            path = fullfile(obj.path, strcat(name, ".mat"));
+            path = fullfile(obj.path, "session_info.mat");
         end
         
         function sessionType = get.sessionType(obj)
@@ -250,7 +254,7 @@ classdef SessionNode < BaseNode
             % 创建会话节点
             session = SessionNode();
             
-            % 打开会话（只加载轻量化的Info数据）
+            % 打开会话
             session.open(srcPath);
         end
         
@@ -310,8 +314,7 @@ classdef SessionNode < BaseNode
             
             % 打开数据节点
             files = dir(fullfile(obj.path, '*.mat'));
-            % 过滤掉文件名以 'info' 结尾的文件
-            dataFiles = files(~cellfun(@isempty, regexp({files.name}, '^((?!'+obj.name+').)*\.mat$')));
+            dataFiles = files(~cellfun(@isempty, regexp({files.name}, '^((?!_info).)*\.mat$')));
             
             for i = 1:length(dataFiles)
                 path = fullfile(obj.path, dataFiles(i).name);

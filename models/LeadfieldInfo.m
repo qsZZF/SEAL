@@ -6,6 +6,8 @@ classdef LeadfieldInfo < handle
         % 基本信息
         name string = "Untitled"
         desc string = ""
+        headModelType string
+        orientation = []
         
         % 导联场数据地址
         dataPath string            % 导联场数据存储
@@ -135,11 +137,27 @@ classdef LeadfieldInfo < handle
 %             end
             
             % 创建LeadfieldInfo对象
-            leadfield = LeadfieldInfo(...
-                leadfieldName, ...
-                dataPath, ...
-                p.Results.Description, ...
-                metadata);
+            try
+                leadfield = LeadfieldInfo(...
+                    leadfieldName, ...
+                    dataPath, ...
+                    p.Results.Description, ...
+                    metadata);
+
+                loadedData = loadData(dataPath);
+
+                leadfield.headModelType = string(loadedData.HeadModelType);
+                if isfield(loadedData, "Orientation")
+                    leadfield.orientation = loadedData.Orientation;
+                else
+                    leadfield.orientation = [];
+                end
+
+            catch ME
+               error('SEAL:LeadfieldInfo:FileCorrupted', ...
+                    'File corrupted: %s', dataPath);
+            end
+
         end
 
         function meta = extractMetadata(dataPath)

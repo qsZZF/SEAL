@@ -1,3 +1,4 @@
 # List of untracked files to ignore
 brainstorm3/
+resources/
 *.asv

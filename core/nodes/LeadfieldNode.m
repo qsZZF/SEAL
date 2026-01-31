@@ -17,6 +17,9 @@ classdef LeadfieldNode < BaseNode
         name string
         data
         infoFile string
+
+        headModelType string
+        orientation
     end
     
     methods
@@ -81,10 +84,22 @@ classdef LeadfieldNode < BaseNode
             obj.cache = [];
             obj.isLoaded = false;
         end
+
+        function deleteFromDisk(obj)
+            delete(obj.infoFile);
+        end
         
         %% 依赖属性get方法
         function leadfieldName = get.name(obj)
             leadfieldName = obj.leadfieldInfo.name;
+        end
+
+        function headModelType = get.headModelType(obj)
+            headModelType = obj.leadfieldInfo.headModelType;
+        end
+
+        function ori = get.orientation(obj)
+            ori = obj.leadfieldInfo.orientation;
         end
         
         function data = get.data(obj)
@@ -97,6 +112,13 @@ classdef LeadfieldNode < BaseNode
         function path = get.infoFile(obj)
             path = fullfile(obj.path, "leadfield_info.mat");
         end
+
+        function metadata = getMetadata(obj)
+            metadata =  obj.getMetadata@BaseNode();
+            metadata = [metadata;
+                "Head Model Type", string(obj.headModelType);
+                "Orientation", mat2str(obj.orientation)];
+        end
     
     end
 
@@ -105,6 +127,11 @@ classdef LeadfieldNode < BaseNode
         function leadfield = fromInfo(leadfieldInfo)
             leadfield = LeadfieldNode();
             leadfield.leadfieldInfo = leadfieldInfo();
+        end
+
+        function leadfield = fromData(path)
+            leadfield = LeadfieldNode();
+            leadfield.leadfieldInfo = LeadfieldInfo.fromData(path);
         end
 
         function leadfield = openExisting(srcPath)
