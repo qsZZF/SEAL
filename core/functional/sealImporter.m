@@ -1,4 +1,4 @@
-function [seal_struct, metadata] = seal_importer(filePath, dataType, varargin)
+function [seal_struct, metadata] = sealImporter(filePath, dataType, varargin)
 %SEAL_IMPORTER Core engine for importing data into SEAL format.
 %   This function converts data from various formats into the standardized
 %   SEAL Toolbox struct format. It is designed to be called directly from

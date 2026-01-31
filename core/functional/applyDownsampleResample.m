@@ -1,4 +1,4 @@
-function [data_out, fs_out] = applyDownsample_resample(data_in, fs_in, D)
+function [data_out, fs_out] = applyDownsampleResample(data_in, fs_in, D)
 % data_in: ch × time × trials
 % D      : 降采样因子（>1，整数最佳）
 % 输出   : data_out (ch × time_new × trials), fs_out = fs_in / D

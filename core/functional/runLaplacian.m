@@ -1,4 +1,4 @@
-function dataOut = run_laplacian(dataIn, chanLocs, m, lambda, useCSD, edgeMode)
+function dataOut = runLaplacian(dataIn, chanLocs, m, lambda, useCSD, edgeMode)
     dataOut = dataIn;
 
     % 若可用 CSD/EEGLAB：优先使用（Perrin 球面样条，效果最佳）
