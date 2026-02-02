@@ -80,6 +80,10 @@ classdef CortexNode < BaseNode
             obj.cache = [];
             obj.isLoaded = false;
         end
+
+        function deleteFromDisk(obj)
+            delete(obj.infoFile);
+        end
         
         %% 依赖属性get方法
         function cortexName = get.name(obj)
@@ -104,6 +108,11 @@ classdef CortexNode < BaseNode
         function cortex = fromInfo(cortexInfo)
             cortex = CortexNode();
             cortex.cortexInfo = cortexInfo();
+        end
+
+        function cortex = fromData(path)
+            cortex = CortexNode();
+            cortex.cortexInfo = CortexInfo.fromData(path);
         end
 
         function cortex = openExisting(srcPath)

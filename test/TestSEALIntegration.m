@@ -1,6 +1,6 @@
 classdef TestSEALIntegration < matlab.unittest.TestCase
     %TESTSEALINTEGRATION SEAL框架集成测试
-    % 测试整个SEAL框架的数据节点（Project、Protocol、Session、Channel、Cortex、Leadfield、Data）
+    % 测试整个SEAL框架的数据节点（Project、Protocol、Session、Chanlocs、Cortex、Leadfield、Data）
     % 的创建、读取、保存等集成功能
     
     properties
@@ -10,7 +10,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
         testSessionName = "TestIntegrationSession"
         testDataNames = ["original_data", "processed_data_1", "processed_data_2"]
         
-        testChannelName = "TestChannels"
+        testChanlocsName = "TestChanlocss"
         testCortexName = "TestCortex"
         testLeadfieldName = "TestLeadfield"
         
@@ -37,15 +37,15 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             fprintf("测试数据目录: %s\n", testDataPath);
             
             % 创建测试通道数据
-            channelFilePath = fullfile(testDataPath, "test_channels.mat");
-            if ~isfile(channelFilePath)
-                fprintf("创建测试通道数据: %s\n", channelFilePath);
-                channelData = struct(...
+            chanlocsFilePath = fullfile(testDataPath, "test_chanlocss.mat");
+            if ~isfile(chanlocsFilePath)
+                fprintf("创建测试通道数据: %s\n", chanlocsFilePath);
+                chanlocsData = struct(...
                     "labels", {"Fz", "Cz", "Pz", "Oz", "F3", "F4", "C3", "C4", "P3", "P4"}, ...
                     "positions", rand(10, 3), ...
                     "types", repmat({"EEG"}, 1, 10), ...
                     "metadata", struct("samplingRate", 1000, "unit", "mm", "reference", "Cz"));
-                save(channelFilePath, "channelData");
+                save(chanlocsFilePath, "chanlocsData");
             end
             
             % 创建测试皮层数据
@@ -68,7 +68,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
                 fprintf("创建测试导联场数据: %s\n", leadfieldFilePath);
                 leadfieldData = struct(...
                     "data", rand(10, nVertices), ...
-                    "channel_names", {"Fz", "Cz", "Pz", "Oz", "F3", "F4", "C3", "C4", "P3", "P4"}, ...
+                    "chanlocs_names", {"Fz", "Cz", "Pz", "Oz", "F3", "F4", "C3", "C4", "P3", "P4"}, ...
                     "metadata", struct("method", "BEM", "conductivity", [0.33, 0.0042, 0.33], ...
                     "resolution", "1mm", "source_space", "cortex"));
                 save(leadfieldFilePath, "leadfieldData");
@@ -180,15 +180,15 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             protocolInfoFile = fullfile(testCase.protocolNode.path, testCase.testProtocolName + ".mat");
             testCase.verifyTrue(isfile(protocolInfoFile), "协议信息文件应该存在");
             
-            % 3. 为协议添加单例节点（Channel, Cortex, Leadfield）
+            % 3. 为协议添加单例节点（Chanlocs, Cortex, Leadfield）
             testDataPath = fullfile(testCase.testRootPath, "TestData");
             
             fprintf("3.1 添加通道节点\n");
-            channelDataPath = fullfile(testDataPath, "test_channels.mat");
-            testCase.protocolNode.openChannelFromData(channelDataPath);
-            testCase.verifyNotEmpty(testCase.protocolNode.channelNode, "通道节点应该存在");
-            testCase.verifyEqual(testCase.protocolNode.channelNode.name, "test_channels");
-            testCase.verifyTrue(isfile(fullfile(testCase.protocolNode.path, "channel_info.mat")), ...
+            chanlocsDataPath = fullfile(testDataPath, "test_chanlocss.mat");
+            testCase.protocolNode.openChanlocsFromData(chanlocsDataPath);
+            testCase.verifyNotEmpty(testCase.protocolNode.chanlocsNode, "通道节点应该存在");
+            testCase.verifyEqual(testCase.protocolNode.chanlocsNode.name, "test_chanlocss");
+            testCase.verifyTrue(isfile(fullfile(testCase.protocolNode.path, "chanlocs_info.mat")), ...
                 "通道信息文件应该存在");
             
             fprintf("3.2 添加皮层节点\n");
@@ -218,7 +218,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             % 验证会话创建
             testCase.verifyEqual(testCase.sessionNode.name, testCase.testSessionName);
             testCase.verifyTrue(isfolder(testCase.sessionNode.path), "会话目录应该存在");
-            sessionInfoFile = fullfile(testCase.sessionNode.path, testCase.testSessionName + ".mat");
+            sessionInfoFile = fullfile(testCase.sessionNode.path, "session_info.mat");
             testCase.verifyTrue(isfile(sessionInfoFile), "会话信息文件应该存在");
             
             % 5. 为会话添加数据节点
@@ -279,7 +279,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             testCase.verifyEqual(testCase.protocolNode.name, testCase.testProtocolName);
             
             % 验证单例节点加载
-            testCase.verifyNotEmpty(testCase.protocolNode.channelNode);
+            testCase.verifyNotEmpty(testCase.protocolNode.chanlocsNode);
             testCase.verifyNotEmpty(testCase.protocolNode.cortexNode);
             testCase.verifyNotEmpty(testCase.protocolNode.leadfieldNode);
             
@@ -301,16 +301,16 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             testCase.protocolNode.load();
             
             % 验证通道数据加载
-            if ~isempty(testCase.protocolNode.channelNode)
-                testCase.protocolNode.channelNode.load();
-                testCase.verifyTrue(testCase.protocolNode.channelNode.isLoaded);
-                testCase.verifyNotEmpty(testCase.protocolNode.channelNode.data);
+            if ~isempty(testCase.protocolNode.chanlocsNode)
+                testCase.protocolNode.chanlocsNode.load();
+                testCase.verifyTrue(testCase.protocolNode.chanlocsNode.isLoaded);
+                testCase.verifyNotEmpty(testCase.protocolNode.chanlocsNode.data);
                 
                 % 检查通道数据是否包含预期字段
-                channelData = testCase.protocolNode.channelNode.data;
-                testCase.verifyTrue(isfield(channelData, "labels"));
-                testCase.verifyTrue(isfield(channelData, "positions"));
-                testCase.verifyTrue(isfield(channelData, "metadata"));
+                chanlocsData = testCase.protocolNode.chanlocsNode.data;
+                testCase.verifyTrue(isfield(chanlocsData, "labels"));
+                testCase.verifyTrue(isfield(chanlocsData, "positions"));
+                testCase.verifyTrue(isfield(chanlocsData, "metadata"));
             end
             
             % 验证皮层数据加载
@@ -354,11 +354,11 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             testDataPath = fullfile(testCase.testRootPath, "TestData");
             
             % 验证通道数据一致性
-            if ~isempty(testCase.protocolNode.channelNode)
-                originalChannelData = load(fullfile(testDataPath, "test_channels.mat"));
-                loadedChannelData = testCase.protocolNode.channelNode.data;
+            if ~isempty(testCase.protocolNode.chanlocsNode)
+                originalChanlocsData = load(fullfile(testDataPath, "test_chanlocss.mat"));
+                loadedChanlocsData = testCase.protocolNode.chanlocsNode.data;
                 
-                testCase.verifyEqual(length({loadedChannelData.labels}), length({originalChannelData.channelData.labels}));
+                testCase.verifyEqual(length({loadedChanlocsData.labels}), length({originalChanlocsData.chanlocsData.labels}));
             end
             
             fprintf("✓ 加载完整项目并验证数据一致性测试通过\n");
@@ -387,7 +387,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             % 2. 测试添加新数据节点到会话
             fprintf("2. 测试添加新数据节点到会话\n");
             testDataPath = fullfile(testCase.testRootPath, "TestData");
-            newDataPath = fullfile(testDataPath, "test_channels.mat"); % 重用现有文件
+            newDataPath = fullfile(testDataPath, "test_chanlocss.mat"); % 重用现有文件
             
             newDataInfo = DataInfo.fromData(newDataPath, "Name", "additional_data");
             newDataNode = DataNode.fromInfo(newDataInfo);
@@ -506,7 +506,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             % 1. 初始状态验证
             fprintf("1. 初始状态验证\n");
             testCase.verifyFalse(testCase.protocolNode.isLoaded, "协议初始状态应为未加载");
-            testCase.verifyFalse(testCase.protocolNode.channelNode.isLoaded, "通道节点初始状态应为未加载");
+            testCase.verifyFalse(testCase.protocolNode.chanlocsNode.isLoaded, "通道节点初始状态应为未加载");
             testCase.verifyFalse(testCase.sessionNode.isLoaded, "会话初始状态应为未加载");
             
             % 2. 加载协议数据
@@ -514,12 +514,12 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             testCase.protocolNode.load();
             
             testCase.verifyTrue(testCase.protocolNode.isLoaded, "协议应已加载");
-            testCase.verifyTrue(testCase.protocolNode.channelNode.isLoaded, "通道节点应已加载");
+            testCase.verifyTrue(testCase.protocolNode.chanlocsNode.isLoaded, "通道节点应已加载");
             testCase.verifyTrue(testCase.protocolNode.cortexNode.isLoaded, "皮层节点应已加载");
             testCase.verifyTrue(testCase.protocolNode.leadfieldNode.isLoaded, "导联场节点应已加载");
             
             % 验证数据已加载
-            testCase.verifyNotEmpty(testCase.protocolNode.channelNode.data, "通道数据应已加载");
+            testCase.verifyNotEmpty(testCase.protocolNode.chanlocsNode.data, "通道数据应已加载");
             testCase.verifyNotEmpty(testCase.protocolNode.cortexNode.data, "皮层数据应已加载");
             testCase.verifyNotEmpty(testCase.protocolNode.leadfieldNode.data, "导联场数据应已加载");
             
@@ -538,7 +538,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             fprintf("4. 卸载数据\n");
             testCase.protocolNode.unload();
             testCase.verifyFalse(testCase.protocolNode.isLoaded, "协议应已卸载");
-            testCase.verifyFalse(testCase.protocolNode.channelNode.isLoaded, "通道节点应已卸载");
+            testCase.verifyFalse(testCase.protocolNode.chanlocsNode.isLoaded, "通道节点应已卸载");
             testCase.verifyFalse(testCase.protocolNode.cortexNode.isLoaded, "皮层节点应已卸载");
             testCase.verifyFalse(testCase.protocolNode.leadfieldNode.isLoaded, "导联场节点应已卸载");
             
@@ -649,11 +649,11 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             testDataPath = fullfile(testCase.testRootPath, "TestData");
             
             % 测试从现有通道文件打开
-            channelDataPath = fullfile(testDataPath, "test_channels.mat");
-            channelNode = testCase.protocolNode.openChannelFromData(channelDataPath);
-            testCase.verifyNotEmpty(channelNode);
-            testCase.verifyInstanceOf(channelNode, "ChannelNode");
-            testCase.verifyEqual(channelNode.name, "test_channels");
+            chanlocsDataPath = fullfile(testDataPath, "test_chanlocss.mat");
+            chanlocsNode = testCase.protocolNode.openChanlocsFromData(chanlocsDataPath);
+            testCase.verifyNotEmpty(chanlocsNode);
+            testCase.verifyInstanceOf(chanlocsNode, "ChanlocsNode");
+            testCase.verifyEqual(chanlocsNode.name, "test_chanlocss");
             
             % 测试从现有皮层文件打开
             cortexDataPath = fullfile(testDataPath, "test_cortex.mat");
@@ -737,7 +737,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
 %             testCase.createBasicProjectStructure();
 %             
 %             % 测试添加错误类型的子节点到协议
-%             wrongNode = ChannelNode(); % ChannelNode不能直接作为ProtocolNode的子节点
+%             wrongNode = ChanlocsNode(); % ChanlocsNode不能直接作为ProtocolNode的子节点
 %             testCase.verifyError(@() testCase.protocolNode.addChild(wrongNode), ...
 %                 "SEAL:ProtocolNode:InvalidChildType");
 %             
@@ -796,8 +796,8 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             % 为协议添加单例节点
             testDataPath = fullfile(testCase.testRootPath, "TestData");
             
-            channelDataPath = fullfile(testDataPath, "test_channels.mat");
-            testCase.protocolNode.openChannelFromData(channelDataPath);
+            chanlocsDataPath = fullfile(testDataPath, "test_chanlocss.mat");
+            testCase.protocolNode.openChanlocsFromData(chanlocsDataPath);
             
             cortexDataPath = fullfile(testDataPath, "test_cortex.mat");
             testCase.protocolNode.openCortexFromData(cortexDataPath);
@@ -860,9 +860,9 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             testCase.verifyTrue(isfile(protocolInfoFile), "协议信息文件应该存在");
             
             % 单例节点信息文件
-            channelInfoFile = fullfile(protocolDir, "channel_info.mat");
-            fprintf("        通道信息文件: %s\n", channelInfoFile);
-            testCase.verifyTrue(isfile(channelInfoFile), "通道信息文件应该存在");
+            chanlocsInfoFile = fullfile(protocolDir, "chanlocs_info.mat");
+            fprintf("        通道信息文件: %s\n", chanlocsInfoFile);
+            testCase.verifyTrue(isfile(chanlocsInfoFile), "通道信息文件应该存在");
             
             cortexInfoFile = fullfile(protocolDir, "cortex_info.mat");
             fprintf("        皮层信息文件: %s\n", cortexInfoFile);
@@ -883,7 +883,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
             testCase.verifyTrue(isfolder(sessionDir), "会话目录应该存在");
             
             % 会话信息文件
-            sessionInfoFile = fullfile(sessionDir, testCase.testSessionName + ".mat");
+            sessionInfoFile = fullfile(sessionDir, "session_info.mat");
             fprintf("            会话信息文件: %s\n", sessionInfoFile);
             testCase.verifyTrue(isfile(sessionInfoFile), "会话信息文件应该存在");
             
@@ -1004,7 +1004,7 @@ classdef TestSEALIntegration < matlab.unittest.TestCase
                 
                 % 添加单例节点
                 testDataPath = fullfile(testCase.testRootPath, "TestData");
-                protocol.openChannelFromData(fullfile(testDataPath, "test_channels.mat"));
+                protocol.openChanlocsFromData(fullfile(testDataPath, "test_chanlocss.mat"));
                 protocol.openCortexFromData(fullfile(testDataPath, "test_cortex.mat"));
                 
                 % 创建多个会话

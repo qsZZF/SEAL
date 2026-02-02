@@ -54,6 +54,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
     methods (Abstract, Access = protected)
         % 抽象方法 - 由子类实现
         % validateNode(obj)
+        
     end
 
     methods (Abstract, Access = public)
@@ -61,6 +62,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         unload(obj)
         open(obj, path)
         save(obj)
+        deleteFromDisk(obj)
     end
     
     methods
@@ -294,6 +296,13 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             for i = 1:obj.childCount
                 obj.children(i).printTree(level + 1);
             end
+        end
+
+        function res = getMetadata(obj)
+            res = ["Name",obj.name;
+                "Path",obj.path;
+                "Data Type", obj.type];
+
         end
     end
     
