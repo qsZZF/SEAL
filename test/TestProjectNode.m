@@ -59,7 +59,7 @@ classdef TestProjectNode < matlab.unittest.TestCase
             fprintf('\n=== 测试创建新项目 ===\n');
             
             % 创建新项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath, ...
                 'desc', '这是一个测试项目');
@@ -82,13 +82,13 @@ classdef TestProjectNode < matlab.unittest.TestCase
             fprintf('\n=== 测试加载项目 ===\n');
             
             % 先创建项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
             
             % 然后加载项目
             projectPath = fullfile(testCase.testProjectPath, testCase.testProjectName);
-            loadedProject = ProjectNode.openProject(projectPath);
+            loadedProject = ProjectNode.openExisting(projectPath);
             
             % 验证加载的项目属性
             testCase.verifyEqual(loadedProject.name, string(testCase.testProjectName));
@@ -106,7 +106,7 @@ classdef TestProjectNode < matlab.unittest.TestCase
             fprintf('\n=== 测试保存项目 ===\n');
             
             % 创建项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
             
@@ -118,7 +118,7 @@ classdef TestProjectNode < matlab.unittest.TestCase
             
             % 重新加载验证修改是否保存
             projectPath = fullfile(testCase.testProjectPath, testCase.testProjectName);
-            reloadedProject = ProjectNode.openProject(projectPath);
+            reloadedProject = ProjectNode.openExisting(projectPath);
             
             testCase.verifyEqual(reloadedProject.projectInfo.desc, "修改后的描述");
             
@@ -134,7 +134,7 @@ classdef TestProjectNode < matlab.unittest.TestCase
             fprintf('\n=== 测试卸载项目 ===\n');
             
             % 创建并加载项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
 
@@ -156,7 +156,7 @@ classdef TestProjectNode < matlab.unittest.TestCase
             fprintf('\n=== 测试项目属性 ===\n');
             
             % 创建项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath, ...
                 'desc', '属性测试项目');

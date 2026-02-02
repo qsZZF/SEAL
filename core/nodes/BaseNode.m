@@ -20,7 +20,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         uuid string
         tags string
         isSelected logical
-        isLoaded logical
+        isLoaded logical = false
         
         % 元数据
         metadata struct
@@ -31,7 +31,6 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         % 依赖属性
         isRoot logical
         isLeaf logical
-        depth int16
         childCount double
         hasChildren logical
     end
@@ -39,6 +38,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
     properties (Abstract, Dependent, SetAccess = public)
         % 依赖属性
         name string
+%         infoPath string
     end
     
     events
@@ -91,15 +91,6 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             leaf = isempty(obj.children);
         end
         
-        function depth = get.depth(obj)
-            %GET.DEPTH 获取节点深度
-            if obj.isRoot
-                depth = 0;
-            else
-                depth = obj.parent.depth + 1;
-            end
-        end
-        
         function count = get.childCount(obj)
             %GET.CHILDCOUNT 获取子节点数量
             count = length(obj.children);
@@ -119,7 +110,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             validateattributes(childNode, {'BaseNode'}, {'scalar'});
             
             % 检查唯一性
-            if isSubNode(childNode)
+            if obj.isSubNode(childNode)
                 return
             end
             
@@ -150,7 +141,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             validateattributes(childNode, {'BaseNode'}, {'scalar'});
             
             % 检查是否为直接子节点
-            if ~isSubNode(childNode)
+            if ~obj.isSubNode(childNode)
                 return
             end
             
@@ -158,9 +149,9 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             childNode.parent = BaseNode.empty;
             obj.children(obj.children == childNode) = [];
             
-            % 触发事件
-            obj.notify('NodeRemoved', NodeEventData(childNode));
-            obj.updateModifiedDate();
+%             % 触发事件
+%             obj.notify('NodeRemoved', NodeEventData(childNode));
+%             obj.updateModifiedDate();
         end
         
         function child = getChild(obj, childName, recursive)
@@ -247,7 +238,7 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         function select(obj)
             %SELECT 选择节点
             obj.isSelected = true;
-            obj.notify('NodeSelected', NodeEventData(obj));
+%             obj.notify('NodeSelected', NodeEventData(obj));
         end
         
         function deselect(obj)
@@ -257,6 +248,11 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         
         function delete(obj)
             %DELETE 析构函数
+
+            if ~isvalid(obj)
+                return
+            end
+
             obj.unload();
             
             % 清理父子关系
@@ -308,8 +304,8 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
         end
 
         function res = isSubNode(obj, other)
-            if ~isempty(obj.children)
-                childIds = arrayfun(@(x) string(x.name), obj.children);
+            if obj.hasChildren
+                childIds = arrayfun(@(x) string(x.uuid), obj.children);
                 if any(strcmp(childIds, string(other.uuid)))
                     res = true;
                     return

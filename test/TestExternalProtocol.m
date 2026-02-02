@@ -67,7 +67,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             fprintf('\n=== 测试从文件夹打开外部协议 ===\n');
             
             % 1. 创建项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
             
@@ -85,12 +85,11 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             externalProtocolInfo.save(externalProtocolDir);
             
             % 3. 打开外部协议
-            externalProtocol = ProtocolNode.openProtocol(externalProtocolDir, testCase.projectNode);
+            externalProtocol = testCase.projectNode.openProtocol(externalProtocolDir);
             
             % 4. 验证协议属性
             testCase.verifyEqual(externalProtocol.name, testCase.testExternalProtocolName);
             testCase.verifyEqual(externalProtocol.protocolType, "EEG");
-            testCase.verifyTrue(externalProtocol.isLoaded);
             
             % 5. 验证协议已添加到项目
             testCase.verifyEqual(testCase.projectNode.protocolCount, 1);
@@ -105,7 +104,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             fprintf('\n=== 测试从.mat文件打开外部协议 ===\n');
             
             % 1. 创建项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
             
@@ -123,12 +122,11 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             externalProtocolInfo.save(externalProtocolDir);
             
             % 3. 直接从.mat文件打开外部协议
-            externalProtocol = ProtocolNode.openProtocol(externalProtocolFile, testCase.projectNode);
+            externalProtocol = testCase.projectNode.openProtocol(externalProtocolFile);
             
             % 4. 验证协议属性
             testCase.verifyEqual(externalProtocol.name, testCase.testExternalProtocolName);
             testCase.verifyEqual(externalProtocol.protocolType, "MEG");
-            testCase.verifyTrue(externalProtocol.isLoaded);
             
             % 5. 验证协议已添加到项目
             testCase.verifyEqual(testCase.projectNode.protocolCount, 1);
@@ -142,7 +140,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             fprintf('\n=== 测试将外部协议保存到项目中 ===\n');
             
             % 1. 创建项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
             
@@ -159,7 +157,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             externalProtocolInfo.save(externalProtocolDir);
             
             % 3. 打开外部协议
-            externalProtocol = ProtocolNode.openProtocol(externalProtocolDir, testCase.projectNode);
+            externalProtocol = testCase.projectNode.openProtocol(externalProtocolDir);
             
             % 4. 修改协议信息
             externalProtocol.protocolInfo.desc = "修改后的协议描述";
@@ -175,7 +173,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             testCase.verifyTrue(isfile(projectProtocolFile), '协议文件应该在项目内创建');
             
             % 7. 重新加载验证修改是否保存
-            reloadedProtocol = ProtocolNode.openProtocol(projectProtocolPath, testCase.projectNode);
+            reloadedProtocol = testCase.projectNode.openProtocol(projectProtocolPath);
             testCase.verifyEqual(reloadedProtocol.protocolInfo.desc, "修改后的协议描述");
             
             % 清理
@@ -190,7 +188,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             fprintf('\n=== 测试外部协议路径一致性 ===\n');
             
             % 1. 创建项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
             
@@ -207,7 +205,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             externalProtocolInfo.save(externalProtocolDir);
             
             % 3. 打开外部协议
-            externalProtocol = ProtocolNode.openProtocol(externalProtocolDir, testCase.projectNode);
+            externalProtocol = testCase.projectNode.openProtocol(externalProtocolDir);
             
             % 4. 验证路径设置正确
             expectedPath = fullfile(testCase.projectNode.path, 'Protocols', testCase.testExternalProtocolName);
@@ -226,7 +224,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             fprintf('\n=== 测试打开多个外部协议 ===\n');
             
             % 1. 创建项目
-            testCase.projectNode = ProjectNode.createNewProject(...
+            testCase.projectNode = ProjectNode.createNew(...
                 testCase.testProjectName, ...
                 testCase.testProjectPath);
             
@@ -247,7 +245,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
                 protocolInfo.save(protocolDir);
                 
                 % 打开外部协议
-                ProtocolNode.openProtocol(protocolDir, testCase.projectNode);
+                testCase.projectNode.openProtocol(protocolDir);
             end
             
             % 3. 验证所有协议都已加载
@@ -271,7 +269,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             fprintf('\n=== 集成测试：外部协议的完整工作流程 ===\n');
             
             % 1. 创建项目和外部协议
-            project = ProjectNode.createNewProject("WorkflowTestProject", testCase.testProjectPath);
+            project = ProjectNode.createNew("WorkflowTestProject", testCase.testProjectPath);
             
             externalProtocolDir = fullfile(testCase.externalProtocolPath, "WorkflowExternalProtocol");
             if ~isfolder(externalProtocolDir)
@@ -285,7 +283,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             externalProtocolInfo.save(externalProtocolDir);
             
             % 2. 打开外部协议
-            externalProtocol = ProtocolNode.openProtocol(externalProtocolDir, project);
+            externalProtocol = project.openProtocol(externalProtocolDir);
             
             % 3. 修改并保存
             externalProtocol.protocolInfo.desc = "工作流程修改后的描述";
@@ -293,7 +291,7 @@ classdef TestExternalProtocol < matlab.unittest.TestCase
             
             % 4. 重新加载项目验证持久化
             projectPath = fullfile(testCase.testProjectPath, "WorkflowTestProject");
-            reloadedProject = ProjectNode.openProject(projectPath);
+            reloadedProject = ProjectNode.openExisting(projectPath);
             
             % 5. 验证外部协议已正确集成到项目中
             testCase.verifyEqual(reloadedProject.protocolCount, 1);

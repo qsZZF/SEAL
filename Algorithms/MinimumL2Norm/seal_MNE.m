@@ -136,7 +136,7 @@ if ~isequal(C_noise, eye(Nchannels))
             s_inv_sqrt_c(1:rank_c) = 1./sqrt(s_c(1:rank_c));
             iW = diag(s_inv_sqrt_c) * U_c'; % More robust whitening matrix
         else
-            [U_c, S_c_diag] = eig((C_noise_input + C_noise_input')/2); % Ensure symmetry
+            [U_c, S_c_diag] = eig((C_noise + C_noise')/2); % Ensure symmetry
             S_c_diag = diag(S_c_diag);
             S_c_diag(S_c_diag < eps) = eps; % Floor small/negative eigenvalues
             iW = diag(1./sqrt(S_c_diag)) * U_c';
@@ -235,6 +235,7 @@ else
     error('seal_MNE:InvalidRegParam', 'RegularizationParameter must be a non-negative scalar or a valid string.');
 end
     Param_MNE.RegularizationParameter = sqrt(lambda_sq_used); % Store actually used lambda
+     disp(['Used Lambda: ', num2str(Param_MNE.RegularizationParameter)]);
 %% 4. MNE Inverse Operator for Whitened Data (M_w)
 % M_w = R_s * L_w' * inv(L_w * R_s * L_w' + lambda_sq_used * I_nchannels)
 Gram = L_w * L_w' + lambda_sq_used * eye(Nchannels);

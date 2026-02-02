@@ -44,20 +44,11 @@ classdef ProjectInfo < handle
         function save(obj, path)
             %SAVE 保存项目信息
             % 输入:
-            %   savePath - 保存路径（可选）
+            %   path - 保存路径
             
-            if path == ""
-                error('SEAL:ProjectInfo:InvalidPath', ...
-                    'No valid project path specified.');
-            end
-            
-            if ~isfolder(path)
-                mkdir(path);
-            end
-            
-            % 保存项目元数据
+            checkDir(path);
             obj.updateModifiedDate();
-            save(fullfile(path, strcat(obj.name, '.mat')), 'obj');
+            saveData(path, obj);
         end
     end
     
@@ -95,7 +86,7 @@ classdef ProjectInfo < handle
             end
             
             % 加载项目数据
-            project = load(projectFile, 'obj').obj;
+            project = loadData(projectFile);
         end
     end
 end
