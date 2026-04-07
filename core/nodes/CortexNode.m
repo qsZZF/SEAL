@@ -60,18 +60,91 @@ classdef CortexNode < BaseNode
         end
 
         function load(obj)
-            %LOAD 加载皮层数据
+            %LOAD 加载皮层模型，按需提取并组装标准结构体
             if obj.isLoaded
                 return;
             end
             
-            % 加载皮层元数据
-            if ~isempty(obj.cortexInfo)
-                [~, name, ~] = fileparts(obj.cortexInfo.dataPath);
-                if isfile(obj.cortexInfo.dataPath)
-                    obj.cache = loadData(obj.cortexInfo.dataPath);
-                    obj.isLoaded = true;
+            if ~isempty(obj.cortexInfo) && isfile(obj.cortexInfo.dataPath)
+                
+                % 1. 临时读取原始数据
+                rawData = loadData(obj.cortexInfo.dataPath); 
+                
+                % ==========================================
+                % 2. 自动拆开“俄罗斯套娃”
+                % ==========================================
+                if isstruct(rawData)
+                    outerFields = fieldnames(rawData);
+                    if length(outerFields) == 1 && isstruct(rawData.(outerFields{1}))
+                        rawData = rawData.(outerFields{1}); % 剥去外壳
+                    end
+                    availableFields = fieldnames(rawData);
+                else
+                    error('皮层模型必须是结构体或 .mat 文件！');
                 end
+                
+                % ==========================================
+                % 3. 定义三大刚需的别名查找字典
+                % ==========================================
+                % 顶点坐标 (N x 3)
+                vertAliases = {'Vertices', 'pos', 'Position', 'vertices', 'nodes'};
+                % 顶点连接/面 (M x 3)
+                FacesAliases = { 'Faces', 'tri', 'Triangles', 'faces', 'polygons'};
+                % 脑区图谱 (结构体数组或索引)
+                atlasAliases = {'Atlas', 'Scout', 'atlas', 'regions', 'parcellation'};
+                connAliases = {'VertConn'};
+                % 初始化找到的真实字段名
+                matchedVert = '';
+                matchedFaces = '';
+                matchedAtlas = '';
+                matchedConn ='';
+                % 自动查字典匹配
+                for i = 1:length(vertAliases), if ismember(vertAliases{i}, availableFields), matchedVert = vertAliases{i}; break; end, end
+                for i = 1:length(FacesAliases), if ismember(FacesAliases{i}, availableFields), matchedFaces = FacesAliases{i}; break; end, end
+                for i = 1:length(atlasAliases), if ismember(atlasAliases{i}, availableFields), matchedAtlas = atlasAliases{i}; break; end, end
+                for i = 1:length(connAliases), if ismember(connAliases{i}, availableFields), matchedConn = connAliases{i}; break; end, end
+                % ==========================================
+                % 4. 触发防御机制：缺哪个，就弹窗问哪个
+                % ==========================================
+                if isempty(matchedVert)
+                    [indx, tf] = listdlg('ListString', availableFields, 'SelectionMode', 'single', ...
+                        'PromptString', {'未识别到【顶点坐标 (Vertices)】', '请指定:'}, 'Name', '皮层匹配 (1/4)');
+                    if tf, matchedVert = availableFields{indx}; else, error('用户取消导入。'); end
+                end
+
+                if isempty(matchedFaces)
+                    [indx, tf] = listdlg('ListString', availableFields, 'SelectionMode', 'single', ...
+                        'PromptString', {'未识别到【拓扑连接/面 (Faces)】', '请指定:'}, 'Name', '皮层匹配 (2/4)');
+                    if tf, matchedFaces = availableFields{indx}; else, error('用户取消导入。'); end
+                end
+
+                if isempty(matchedAtlas)
+                    [indx, tf] = listdlg('ListString', availableFields, 'SelectionMode', 'single', ...
+                        'PromptString', {'未识别到【脑区图谱 (Atlas)】', '请指定 (若无图谱可直接取消):'}, 'Name', '皮层匹配 (3/4)');
+                    if tf, matchedAtlas = availableFields{indx}; end
+                end
+
+                if isempty(matchedConn)
+                    [indx, tf] = listdlg('ListString', availableFields, 'SelectionMode', 'single', ...
+                        'PromptString', {'未识别到【链接（VertConn）】', '请指定 :'}, 'Name', '皮层匹配 (4/4)');
+                    if tf, matchedConn = availableFields{indx}; end
+                end
+                % ==========================================
+                % 5. 终极净化与组装：装入纯净的 data_cache
+                % ==========================================
+                % 不管原始字段叫什么鬼名字，在这里统一“换发身份证”！
+                obj.cache = struct();
+                obj.cache.Vertices = rawData.(matchedVert);
+                obj.cache.Faces = rawData.(matchedFaces);
+                obj.cache.VertConn = rawData.(matchedConn);
+                if ~isempty(matchedAtlas)
+                    obj.cache.Atlas = rawData.(matchedAtlas);
+                else
+                    obj.cache.Atlas = []; % 兜底为空
+                end
+                
+                % (函数结束，庞杂的 rawData 被内存自动回收，只留下纯净的 obj.data_cache)
+                obj.isLoaded = true;
             end
         end
 

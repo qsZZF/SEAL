@@ -11,7 +11,6 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
     
     properties (SetAccess = public)
         path string
-
         % 树形结构关系
         parent BaseNode
         children BaseNode
@@ -118,6 +117,10 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
             
             % 设置父子关系
             childNode.parent = obj;
+            
+            if isprop(childNode, 'sessionpath') && isprop(obj, 'path')
+                childNode.sessionpath = obj.path;
+            end
             
             % 添加到子节点列表
             if isempty(obj.children)
@@ -304,8 +307,22 @@ classdef (Abstract) BaseNode < handle & matlab.mixin.Heterogeneous
                 "Data Type", obj.type];
 
         end
+
+        
     end
-    
+    % 在 BaseNode.m 的任意 methods 区域外，新增这个特殊的密封方法块
+    methods (Sealed)
+        function tf = eq(obj1, obj2)
+            % EQ 重载 == 运算符
+            % 强制调用 handle 类的底层比较逻辑（比较内存地址是否为同一个实例）
+            tf = eq@handle(obj1, obj2);
+        end
+        
+        function tf = ne(obj1, obj2)
+            % NE 重载 ~= 运算符 (配套写上更安全)
+            tf = ~eq(obj1, obj2);
+        end
+    end
     methods (Access = protected)
         function updateModifiedDate(obj)
             %UPDATEMODIFIEDDATE 更新修改时间

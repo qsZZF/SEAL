@@ -20,6 +20,7 @@ classdef LeadfieldNode < BaseNode
 
         headModelType string
         orientation
+        normals
     end
     
     methods
@@ -68,14 +69,91 @@ classdef LeadfieldNode < BaseNode
             if obj.isLoaded
                 return;
             end
-            
-            % 加载导联场元数据
-            if ~isempty(obj.leadfieldInfo)
-                [~, name, ~] = fileparts(obj.leadfieldInfo.dataPath);
-                if isfile(obj.leadfieldInfo.dataPath)
-                    obj.cache = loadData(obj.leadfieldInfo.dataPath);
-                    obj.isLoaded = true;
+            if ~isempty(obj.leadfieldInfo) && isfile(obj.leadfieldInfo.dataPath)
+
+                % 1. 临时读取原始数据 (在这个函数结束时，多余的内存会被自动回收)
+                rawData = loadData(obj.leadfieldInfo.dataPath);
+
+                matchedGainField = '';
+
+                % ==========================================
+                % 2. 类型防御 与 拆盒机制
+                % ==========================================
+                if isnumeric(rawData)
+                    % 极其痛快：如果直接就是矩阵，直接塞进缓存
+                    obj.cache = rawData;
+                    matchedGainField = 'DirectNumeric';
+                    availableFields = '';
+                    
+                elseif isstruct(rawData)
+                    outerFields = fieldnames(rawData);
+
+                    if length(outerFields) == 1
+                        loneVar = rawData.(outerFields{1});
+                        if isstruct(loneVar)
+                            % 剥开俄罗斯套娃
+                            rawData = loneVar;
+                            availableFields = fieldnames(rawData);
+                        elseif isnumeric(loneVar)
+                            % 结构体里只有一个纯矩阵，直接提取！
+                            obj.cache = loneVar;
+                            matchedGainField = outerFields{1};
+                        else
+                            availableFields = outerFields;
+                        end
+                    else
+                        % 多个变量，准备查字典
+                        availableFields = outerFields;
+                    end
+                else
+                    error('不支持的导联场数据类型。');
                 end
+
+                % ==========================================
+                % 3. 字典匹配与精确提取 (按需取用)
+                % ==========================================
+                if isempty(matchedGainField)
+                    gainAliases = {'Gain', 'L', 'Leadfield', 'LF', 'Forward', 'G', 'matrix'};
+                    for i = 1:length(gainAliases)
+                        if ismember(gainAliases{i}, availableFields)
+                            matchedGainField = gainAliases{i};
+                            % 【核心】：只把矩阵掏出来放进 cache，丢弃整个结构体！
+                            obj.cache = rawData.(matchedGainField);
+                            break;
+                        end
+                    end
+                end
+
+
+                normalAliases = {'GridOrient', 'Normals', 'Orientations', 'CorticalNormals', 'Norm'};
+                for i = 1:length(normalAliases)
+                    if ismember(normalAliases{i}, availableFields)
+                        % 提取法向量并存入属性
+                        obj.leadfieldInfo.normals = rawData.(normalAliases{i});
+                        disp(['✅ 成功识别并提取法向量 (匹配字段: ', normalAliases{i}, ')']);
+                        break; % 找到了就立刻停止搜寻
+                    end
+                end
+
+                % ==========================================
+                % 4. 人工兜底防御
+                % ==========================================
+                if isempty(matchedGainField)
+                    [indx, tf] = listdlg('ListString', availableFields, ...
+                        'SelectionMode', 'single', ...
+                        'PromptString', {'导联场加载: 未识别到标准矩阵字段。', '请手动指定:'}, ...
+                        'Name', '导联场匹配向导', ...
+                        'ListSize', [250, 150]);
+                    if tf
+                        % 用户选啥，我们就只提取啥
+                        obj.cache = rawData.(availableFields{indx});
+                    else
+                        error('SEAL:LeadfieldNode:LoadFailed', '用户取消了导联场匹配。');
+                    end
+                end
+                % 加载导联场元数据
+
+                obj.isLoaded = true;
             end
         end
 
@@ -120,13 +198,16 @@ classdef LeadfieldNode < BaseNode
                 "Orientation", mat2str(obj.orientation)];
         end
     
+        function n = get.normals(obj)
+            n = obj.leadfieldInfo.normals;
+        end
     end
 
     methods (Static)
         
         function leadfield = fromInfo(leadfieldInfo)
             leadfield = LeadfieldNode();
-            leadfield.leadfieldInfo = leadfieldInfo();
+            leadfield.leadfieldInfo = leadfieldInfo;
         end
 
         function leadfield = fromData(path)

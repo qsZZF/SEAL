@@ -18,9 +18,7 @@ classdef DataNode < BaseNode
         name string
         data
         result
-
-        infoFile string
-
+        infoFile strings
         size
         srate
     end
@@ -67,14 +65,88 @@ classdef DataNode < BaseNode
             if obj.isLoaded
                 return;
             end
-            
+
             % 加载元数据
             if ~isempty(obj.dataInfo)
                 if isfile(obj.dataInfo.dataPath)
-                    obj.data_cache = loadData(obj.dataInfo.dataPath);
-                end
-                if isfile(obj.dataInfo.resultPath)
-                    obj.res_cache = loadData(obj.dataInfo.resultPath);
+                    % 先把文件读进临时变量
+                    rawData = load(obj.dataInfo.dataPath, '-mat'); % 或者用 load()
+
+                    % --- 自动拆开“俄罗斯套娃” ---
+                    outerFields = fieldnames(rawData);
+                    if length(outerFields) == 1 && isstruct(rawData.(outerFields{1}))
+                        rawData = rawData.(outerFields{1});
+                    end
+
+                    % --- 智能字段匹配 ---
+                    availableFields = fieldnames(rawData);
+                    dataAliases = {'data', 'Data', 'DataFile', 'matrix', 'signal', 'EEG'};
+
+                    matchedField = '';
+                    for i = 1:length(dataAliases)
+                        if ismember(dataAliases{i}, availableFields)
+                            matchedField = dataAliases{i};
+                            break;
+                        end
+                    end
+
+                    % --- 最终赋值给缓存 ---
+                    if ~isempty(matchedField)
+                        tempData = rawData.(matchedField);
+                    else
+                        % 如果实在找不到，弹窗让用户选（调用我们上次说的防御机制）
+                        [indx, tf] = listdlg('ListString', availableFields, ...
+                            'SelectionMode', 'single', ...
+                            'PromptString', {'数据加载失败！未识别到标准矩阵字段。', '请手动指定代表脑电信号的变量:'}, ...
+                            'Name', '手动匹配字段');
+                        if tf
+                            obj.data_cache = rawData.(availableFields{indx});
+                        else
+                            error('SEAL:DataNode:LoadFailed', '用户取消了字段匹配，数据加载中止。');
+                        end
+                    end
+                    [~, ~, fileExt] = fileparts(obj.dataInfo.dataPath);
+
+                    if (ischar(tempData) || isstring(tempData)) && strcmpi(fileExt, '.set')
+                        % 鉴定结果：它只是个字符串！说明真实数据在外部的 .fdt 文件里
+                        fdtFilename = char(tempData);
+                        [setDir, ~, ~] = fileparts(obj.dataInfo.dataPath);
+                        fdtPath = fullfile(setDir, fdtFilename);
+
+                        if isfile(fdtPath)
+                            % 打开并读取 IEEE Little-Endian 的 32位浮点数二进制文件
+                            fileID = fopen(fdtPath, 'r', 'ieee-le');
+                            if fileID == -1
+                                error('SEAL:DataNode:FDTError', '无法打开 .fdt 文件读取权限: %s', fdtPath);
+                            end
+
+                            try
+                                rawBin = fread(fileID, Inf, 'float32');
+                                fclose(fileID);
+
+                                % 尝试利用 rawData (即 EEG 结构体) 里的参数重构 3D 矩阵
+                                if isfield(rawData, 'nbchan') && isfield(rawData, 'pnts') && isfield(rawData, 'trials')
+                                    obj.data_cache = reshape(rawBin, [rawData.nbchan, rawData.pnts, rawData.trials]);
+                                elseif isprop(obj.dataInfo, 'size') && ~isempty(obj.dataInfo.size)
+                                    % 备用方案：使用 DataInfo 里提前存好的 size
+                                    obj.data_cache = reshape(rawBin, obj.dataInfo.size);
+                                else
+                                    warning('SEAL:DataNode:MissingDimensions', '找不到重构矩阵的维度参数，数据可能变形。');
+                                    obj.data_cache = rawBin;
+                                end
+
+                            catch ME
+                                if exist('fileID', 'var') && fileID ~= -1, fclose(fileID); end
+                                error('读取 .fdt 二进制文件失败: %s', ME.message);
+                            end
+                        else
+                            error('SEAL:DataNode:MissingFDT', '找不到依赖的外部数据文件: %s', fdtPath);
+                        end
+                    else
+                        % 鉴定结果：是真正的数值矩阵 (单文件 .set 或 普通 .mat)
+                        % 直接安全赋值
+                        obj.data_cache = tempData;
+                    end
                 end
                 obj.isLoaded = true;
             end
@@ -136,7 +208,7 @@ classdef DataNode < BaseNode
     methods (Static)
         function data = fromInfo(dataInfo)
             data = DataNode();
-            data.dataInfo = dataInfo();
+            data.dataInfo = dataInfo;
         end
 
         function data = fromData(path)

@@ -230,7 +230,7 @@ classdef ProtocolNode < BaseNode
             cortexInfo = CortexInfo.fromData(dataPath);
             obj.cortexNode = CortexNode.fromInfo(cortexInfo);
             obj.cortexNode.path = obj.path;
-            obj.cortexNode.parent = obj;
+            obj.addChild(obj.cortexNode);
             obj.cortexNode.save();
             node = obj.cortexNode;
         end
@@ -239,7 +239,7 @@ classdef ProtocolNode < BaseNode
             leadfieldInfo = LeadfieldInfo.fromData(dataPath);
             obj.leadfieldNode = LeadfieldNode.fromInfo(leadfieldInfo);
             obj.leadfieldNode.path = obj.path;
-            obj.leadfieldNode.parent = obj;
+            obj.addChild(obj.leadfieldNode);
             obj.leadfieldNode.save();
             node = obj.leadfieldNode;
        end
@@ -250,7 +250,14 @@ classdef ProtocolNode < BaseNode
             obj.addChild(sessionNode);
             sessionNode.save();
        end
-        
+
+       function node = openDataFromEEGLAB(obj, dataPath)
+           sessionNode = SessionNode.createNew(findAvailableName(obj.sessionFolder, "Session #"), obj.sessionFolder);
+           node = sessionNode.openDataFromEEGLAB(dataPath);
+           obj.addChild(sessionNode);
+           sessionNode.save();
+       end
+
         %% 依赖属性get方法
         function count = get.sessionCount(obj)
             % 统计会话节点数量
@@ -334,7 +341,7 @@ classdef ProtocolNode < BaseNode
         function addChild(obj, childNode)
             %ADDCHILD 重写添加子节点方法，确保只添加允许的类型
             
-            allowedTypes = {'SessionNode'};  % ProtocolNode只能添加SessionNode子节点
+            allowedTypes = {'CortexNode','LeadfieldNode','SessionNode'};  % ProtocolNode只能添加SessionNode子节点
             if ~any(cellfun(@(type) isa(childNode, type), allowedTypes))
                 error('SEAL:ProtocolNode:InvalidChildType', ...
                     'ProtocolNode只能添加SessionNode子节点');
@@ -452,7 +459,7 @@ classdef ProtocolNode < BaseNode
             if ~isempty(obj.cortexInfoFile) && isfile(obj.cortexInfoFile)
                 try
                     obj.cortexNode = CortexNode.openExisting(obj.cortexInfoFile);
-                    obj.cortexNode.parent = obj;
+                    obj.addChild(obj.cortexNode);
                 catch ME
                     warning('SEAL:ProtocolNode:OpenCortexFailed', ...
                         'Failed to open cortex node: %s. Error: %s', ...
@@ -465,7 +472,7 @@ classdef ProtocolNode < BaseNode
                 try
                     fprintf('  Opening leadfield node from: %s\n', obj.leadfieldInfoFile);
                     obj.leadfieldNode = LeadfieldNode.openExisting(obj.leadfieldInfoFile);
-                    obj.leadfieldNode.parent = obj;
+                    obj.addChild(obj.leadfieldNode);
                 catch ME
                     warning('SEAL:ProtocolNode:OpenLeadfieldFailed', ...
                         'Failed to open leadfield node: %s. Error: %s', ...

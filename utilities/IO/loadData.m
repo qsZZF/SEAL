@@ -8,7 +8,6 @@ function data = loadData(filename)
     if numFields == 1
         data = loaded.(fields{1});
     else
-        error('MAT文件包含 %d 个字段，只允许包含1个字段\n包含的字段: %s', ...
-              numFields, strjoin(fields, ', '));
+        data = loaded;
     end
 end

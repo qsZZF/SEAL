@@ -146,10 +146,10 @@ classdef SessionNode < BaseNode
             % 添加到子节点列表
             obj.addChild(dataNode);
             
-            % 如果是原始数据，更新会话信息
-            if dataNode.isOriginal
-                obj.sessionInfo.metadata.hasOriginalData = true;
-            end
+%             % 如果是原始数据，更新会话信息
+%             if dataNode.isOriginal
+%                 obj.sessionInfo.metadata.hasOriginalData = true;
+%             end
         end
         
         function removeDataNode(obj, dataNode)
@@ -241,6 +241,25 @@ classdef SessionNode < BaseNode
             dataNode.save();
             node = dataNode;
         end
+
+        function node = openResultFromData(obj, datapath,paramStruct)
+            resultInfo = ResultInfo.fromData(datapath,paramStruct);
+            resultNode = ResultNode.fromResultData(resultInfo);
+            resultNode.path = datapath;
+            resultNode.sessionpath = obj.path;
+            obj.addChild(resultNode);
+            resultNode.save();
+            node = resultNode;
+        end
+
+        function node = openDataFromEEGLAB(obj, dataPath)
+            dataInfo = DataInfo.fromEEGLAB(dataPath);
+            dataNode = DataNode.fromInfo(dataInfo);
+            dataNode.path = obj.path;
+            obj.addChild(dataNode)
+            dataNode.save();
+            node = dataNode;
+        end
     end
 
     methods (Static)
@@ -301,31 +320,48 @@ classdef SessionNode < BaseNode
             if obj.path == ""
                 return;
             end
-            
+
             % 创建主目录
             if ~isfolder(obj.path)
                 mkdir(obj.path);
             end
         end
-        
+
         function openChildNodes(obj)
-            %OPENCHILDNODES 打开子节点
-            % 这个方法会在打开会话时自动扫描并打开现有的子节点
-            
-            % 打开数据节点
+            %OPENCHILDNODES 智能打开子节点
+            % 这个方法会在打开会话时自动扫描，并区分数据节点和结果节点
+
             files = dir(fullfile(obj.path, '*.mat'));
+            % 过滤掉 session_info 等配置文件
             dataFiles = files(~cellfun(@isempty, regexp({files.name}, '^((?!_info).)*\.mat$')));
-            
+
             for i = 1:length(dataFiles)
-                path = fullfile(obj.path, dataFiles(i).name);
-                
+                filePath = fullfile(obj.path, dataFiles(i).name);
+
                 try
-                    dataNode = DataNode.openExisting(path);
-                    obj.addChild(dataNode);
+                    % 1. 【雷达探测】：不加载数据，先偷看文件里面装了什么类
+                    fileVars = whos('-file', filePath);
+                    varClasses = {fileVars.class};
+
+                    % 2. 【智能分拣】：根据类名调用不同的打开函数
+                    if ismember('ResultInfo', varClasses) || ismember('ResultNode', varClasses)
+                        % 如果文件里包含 ResultInfo，说明它是结果节点
+                        childNode = ResultNode.openExisting(filePath);
+                    else
+                        % 否则，默认作为原始脑电数据节点打开
+                        % (假设 DataInfo 封装在里面，或者只是个普通的包含 data 的结构体)
+                        childNode = DataNode.openExisting(filePath);
+                    end
+
+                    % 3. 挂载到子节点并建立父子关系
+                    childNode.parent = obj;
+                    obj.addChild(childNode);
+
                 catch ME
-                    warning('SEAL:SessionNode:OpenDataFailed', ...
-                        'Failed to open data node: %s. Error: %s', ...
-                        path, ME.message);
+                    % 降级为 warning，保证某一个文件损坏不会导致整个 App 崩溃启动不了
+                    warning('SEAL:SessionNode:OpenChildFailed', ...
+                        'Failed to open node file: %s.\nError: %s', ...
+                        filePath, ME.message);
                 end
             end
         end

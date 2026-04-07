@@ -45,7 +45,7 @@ function defaultName = findAvailableName(basePath, namePattern)
         match = regexp(dirNames{i}, regexPattern, 'tokens', 'once');
         if ~isempty(match)
             matchingDirs{end+1} = dirNames{i};
-            numbers(end+1) = round(str2double(match{2}));
+            numbers(end+1) = round(str2double(match{1}));
         end
     end
     
@@ -62,7 +62,7 @@ end
 function [baseName, regexPattern] = preparePattern(namePattern)
 %PREPAREPATTERN Convert name pattern to regex pattern
 %   Replace '#' with regex digit pattern and extract base name
-    
+    namePattern = char(namePattern);
     if ~contains(namePattern, '#')
         % If no '#' found, use the pattern as base and append number
         baseName = namePattern;

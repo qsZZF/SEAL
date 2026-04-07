@@ -159,15 +159,15 @@ if ~isempty(smooth)
         loc_sm=vc;
         loc_sm(iVertices,:) = tess_smooth(vc(iVertices,:), SmoothValue, SurfSmoothIterations, VertConn(iVertices,iVertices), 1);
 %         Apply smoothed locations
-        vc=loc_sm;
-        
+vc=loc_sm;
+
     end
 end
-    
+set(handles.axes, 'SortMethod', 'depth');
 handles.hp=patch(handles.axes,'vertices',vc,'faces',tri,...
     'FaceColor',cortexcolor,'edgecolor','none','edgealpha',0.2,'facelighting','gouraud'...
     ,'specularstrength',0.2,'ambientstrength',0.5,'diffusestrength',0.5,...
-    'BackfaceLighting','lit','AmbientStrength',0.5,'SpecularExponent',1,...
+    'BackfaceLighting','unlit','AmbientStrength',0.5,'SpecularExponent',1,...
     'SpecularColorReflectance',0.5,'EdgeLighting','gouraud','facealpha',1);
 
 material dull;

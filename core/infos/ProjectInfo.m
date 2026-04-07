@@ -46,7 +46,7 @@ classdef ProjectInfo < handle
             % 输入:
             %   path - 保存路径
             
-            checkDir(path);
+            %checkDir(path);
             obj.updateModifiedDate();
             saveData(path, obj);
         end

@@ -1006,6 +1006,8 @@ if biasflag && extended
     end; % end while step < maxsteps (ICA Training) %%%%%%%%%%%%%%%%%%%%%%%%%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 end
+pb1.finish();
+pb1.close();
 %% Compute ICA Weights
 if biasflag && ~extended
     while step < maxsteps, %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
