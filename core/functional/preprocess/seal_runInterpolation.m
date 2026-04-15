@@ -1,4 +1,4 @@
-function dataOut = runInterpolation(dataIn, chanLocs, badIdx, method, k, radius, useTemplate)
+function dataOut = seal_runInterpolation(dataIn, chanLocs, badIdx, method, k, radius, useTemplate)
     dataOut = dataIn;
     goodIdx = setdiff(1:numel(chanLocs), badIdx);
 
@@ -45,9 +45,7 @@ function P = ensureXYZ(chanLocs)
             th = deg2rad(chanLocs(i).theta);  % 水平角（EEGLAB 定义）
             ph = deg2rad(chanLocs(i).phi);    % 垂直角
             r  = 1;
-            [x,y,z] = sph2cart(th, deg2rad(90-chanLocs(i).sph_theta_besa), r); %#ok<*NASGU>
-            % 不同数据源角度定义不一致，实际使用时请按你的坐标系修正
-            % 这里保底：用简单极角->球坐标替换
+
             [x,y,z] = sph2cart(th, ph, r);
             P(i,:) = [x,y,z];
         end

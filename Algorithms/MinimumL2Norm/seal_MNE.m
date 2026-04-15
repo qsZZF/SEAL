@@ -188,7 +188,7 @@ elseif ischar(Rs_input) || isstring(Rs_input)
                 Rs = Rs_spatial;
             end
             % Calculate weighted L_w
-            L_w = bsxfun(@times,L_w,Rs_spatial_diag_weights);
+            L_w = L_w* Rs;
         otherwise
             error('seal_MNE:InvalidSourceCovString', 'Unknown string for SourceCovariance.');
     end

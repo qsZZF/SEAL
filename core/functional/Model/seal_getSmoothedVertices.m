@@ -1,4 +1,4 @@
-  function smoothedVC = getSmoothedVertices(vc, VertConn, smoothValue)
+  function smoothedVC = seal_getSmoothedVertices(vc, VertConn, smoothValue)
         smoothValue = smoothValue/100;
        
             iVertices = 1:size(vc,1);

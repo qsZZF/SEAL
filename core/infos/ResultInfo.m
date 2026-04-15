@@ -9,7 +9,8 @@ classdef ResultInfo < handle
         parentDataName string         % 关联的原始数据名称
                
         datapath          
-        
+        isSimu = 0
+        SimuSourcePath
         % 3. 动态参数池 (核心改动)
         % 初始化为空结构体，无论什么算法的参数，都作为动态字段塞进来
         params struct = struct()      

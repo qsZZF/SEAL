@@ -9,11 +9,13 @@ classdef DataInfo < handle
         size int64
         srate int64
         chanlocs 
+        isSimu = 0
         % 数据地址
         dataPath string
         resultPath string
         event 
         unit
+        NoiseCovMat = []
         % 元数据
         metadata struct        % 用户自定义元数据
     end
@@ -108,147 +110,204 @@ classdef DataInfo < handle
             end
         end
 
-        function data = fromData(dataPath, varargin)
-            %FROMDATA 从数据文件直接创建DataInfo
-            % 输入:
-            %   dataPath - 数据文件路径
-            %   varargin - 可选参数:
-            %     'Name' - 名称（可选，默认为文件名）
-            %     'Description' - 描述
-            %     'Metadata' - 额外元数据
-            % 输出:
-            %   data - DataInfo对象
+       function data = fromData(dataPath, varargin)
+    %FROMDATA 智能导入数据 (兼容普通 .mat 与 Brainstorm 格式)
+    %
+    % 输入:
+    %   dataPath - 数据文件路径
+    %   varargin - 可选参数:
+    %     'Name' - 名称（默认文件名）
+    %     'Description' - 描述
+    %     'Metadata' - 额外元数据
+    
+    % ==========================================
+    % 0. 参数解析
+    % ==========================================
+    p = inputParser;
+    addRequired(p, 'dataPath', @(x) isfile(x) && endsWith(x, '.mat', 'IgnoreCase', true));
+    addParameter(p, 'Name', '', @(x) ischar(x) || isstring(x));
+    addParameter(p, 'Description', '', @(x) ischar(x) || isstring(x));
+    addParameter(p, 'Metadata', struct(), @isstruct);
+    parse(p, dataPath, varargin{:});
+    
+    if isempty(p.Results.Name)
+        [~, dataName, ~] = fileparts(dataPath);
+    else
+        dataName = p.Results.Name;
+    end
+    
+    metadata = p.Results.Metadata;
+    
+    try
+        % ==========================================
+        % 1. 嗅探器：先看文件顶层有什么变量
+        % ==========================================
+        fileVars = whos('-file', dataPath);
+        varNames = {fileVars.name};
+        
+        isBrainstorm = ismember('F', varNames) && ismember('Time', varNames);
+        
+        if isBrainstorm
+            % ==========================================
+            % 路线 A：Brainstorm 极速通道（延迟加载）
+            % ==========================================
+            metadata.originalFormat = 'Brainstorm';
             
-            % 参数解析
-            p = inputParser;
-            addRequired(p, 'dataPath', @(x) isfile(x) && endsWith(x, '.mat'));
-            addParameter(p, 'Name', '', @(x) ischar(x) || isstring(x));
-            addParameter(p, 'Description', '', @(x) ischar(x) || isstring(x));
-            addParameter(p, 'Metadata', struct(), @isstruct);
-            addParameter(p, 'AutoExtract', true, @islogical);
+            % 不用 load，直接从 whos 拿 size
+            idxF = strcmp(varNames, 'F');
+            dataSize = fileVars(idxF).size;
             
-            parse(p, dataPath, varargin{:});
+            % 只加载轻量级变量
+            varsToLoad = {'Time', 'Comment', 'Events', 'ChannelFlag', 'ChannelLocs'};
+            varsExist = varsToLoad(ismember(varsToLoad, varNames));
+            lightData = load(dataPath, varsExist{:}, '-mat');
             
-            % 如果未提供名称，使用文件名
-            if isempty(p.Results.Name)
-                [~, name, ~] = fileparts(dataPath);
-                dataName = name;
+            % 采样率从 Time 向量计算
+            if isfield(lightData, 'Time') && length(lightData.Time) > 1
+                dataSrate = 1 / (lightData.Time(2) - lightData.Time(1));
             else
-                dataName = p.Results.Name;
+                dataSrate = 1000;
             end
             
-            % 从数据文件中提取元数据
-            metadata = p.Results.Metadata;
+            % 元数据
+            if isfield(lightData, 'Events')
+                metadata.events = lightData.Events;
+            end
+            if isfield(lightData, 'ChannelFlag')
+                metadata.badChannels = lightData.ChannelFlag;
+            end
             
-           % 创建DataInfo对象
+            % Brainstorm 的通道位置（如果存在）
+            if isfield(lightData, 'ChannelLocs')
+                dataChanlocs = lightData.ChannelLocs;
+            else
+                dataChanlocs = [];
+            end
+            
+            % 名字优先用 Comment
+            if isempty(p.Results.Name) && isfield(lightData, 'Comment')
+                dataName = lightData.Comment;
+            end
+            
+            metadata.targetField = 'F';
+
             try
-                data = DataInfo(...
-                    dataName, ...
-                    dataPath, ...
-                    "", ...
-                    p.Results.Description, ...
-                    metadata);
-                
-                % 1. 获取文件中的所有变量名 (使用 load 获取 struct 的 fieldnames)
-                loadedData = load(dataPath); % 如果你之前的 loadData 返回的是 struct，就继续用 loadData
-                outerFields = fieldnames(loadedData);
-                if length(outerFields) == 1 && isstruct(loadedData.(outerFields{1}))
-                    % 把内层的结构体提取出来，作为真正的 loadedData
-                    loadedData = loadedData.(outerFields{1});
-                end
-                
-                availableFields = fieldnames(loadedData);
-                
-                % ==========================================
-                % 2. 定义自动匹配字典 (Auto-match Dictionaries)
-                % ==========================================
-                dataAliases = {'data', 'Data', 'DataFile', 'matrix', 'signal', 'EEG'};
-                srateAliases = {'srate', 'SamplingRate', 'fs', 'sfreq', 'sRate'};
-                chanlocsAliases = {'chanlocs', 'Channel', 'channels', 'chaninfo', 'electrodes', 'locs', 'labels'};
-
-                matchedDataField = '';
-                matchedSrateField = '';
-                matchedchanlocsField = '';
-                % --- 尝试自动匹配 Data ---
-                for i = 1:length(dataAliases)
-                    if ismember(dataAliases{i}, availableFields)
-                        matchedDataField = dataAliases{i};
-                        break;
-                    end
-                end
-                
-                % --- 尝试自动匹配 Srate ---
-                for i = 1:length(srateAliases)
-                    if ismember(srateAliases{i}, availableFields)
-                        matchedSrateField = srateAliases{i};
-                        break;
-                    end
-                end
-                
-                for i = 1:length(chanlocsAliases)
-                    if ismember(chanlocsAliases{i}, availableFields)
-                        matchedchanlocsField = chanlocsAliases{i};
-                        break;
-                    end
-                end
-
-                % 找不到数据矩阵时触发弹窗
-                if isempty(matchedDataField)
-                    [indx, tf] = listdlg('ListString', availableFields, ...
-                        'SelectionMode', 'single', ...
-                        'PromptString', {'未识别到标准的【数据矩阵】字段！', '请在下方选择代表脑电信号的变量:'}, ...
-                        'Name', 'SEAL 数据导入向导 (1/2)', ...
-                        'ListSize', [250, 150]);
-                    
-                    if tf % tf 为 true 说明用户点了确定
-                        matchedDataField = availableFields{indx};
-                    else
-                        error('SEAL:Import:UserCancelled', '用户取消了数据字段匹配，导入中止。');
-                    end
-                end
-                
-                % 找不到采样率时触发弹窗
-                if isempty(matchedSrateField)
-                    [indx, tf] = listdlg('ListString', availableFields, ...
-                        'SelectionMode', 'single', ...
-                        'PromptString', {'未识别到标准的【采样率】字段！', '请在下方选择代表采样率的变量:'}, ...
-                        'Name', 'SEAL 数据导入向导 (2/2)', ...
-                        'ListSize', [250, 150]);
-                    
-                    if tf
-                        matchedSrateField = availableFields{indx};
-                    else
-                        % 对于采样率，你也可以选择不中断，而是给个默认值
-                        % warning('用户跳过了采样率匹配，默认设置为 1000 Hz');
-                        % matchedSrateField = 'default';
-                        error('SEAL:Import:UserCancelled', '用户取消了采样率字段匹配，导入中止。');
-                    end
-                end
-                
-  
-                data.size = size(loadedData.(matchedDataField));
-                
-                % 防御：如果上一步采样率用户没选（或采取了给默认值的策略）
-                if strcmp(matchedSrateField, 'default')
-                    data.srate = 1000;
-                else
-                    data.srate = loadedData.(matchedSrateField);
-                end
-                data.unit = DataInfo.detectDataUnit(loadedData.(matchedDataField));
-                % [新增] 尝试为通道信息赋值
-                if ~isempty(matchedchanlocsField)
-                    % 如果成功匹配到了通道变量，将其存入你的数据对象中
-                    data.chanlocs = loadedData.(matchedchanlocsField);
-                else
-                    data.chanlocs = [];                
-                end
-
-            catch ME
-                % 精准抛出错误
-                error('SEAL:DataInfo:ImportFailed', ...
-                    '数据提取失败: %s\n详细原因: %s', dataPath, ME.message);
+                matF = matfile(dataPath);
+                fSize = size(matF, 'F');
+                sampleCols = min(1000, fSize(2));
+                sampleData = matF.F(:, 1:sampleCols);
+                dataUnit = DataInfo.detectDataUnit(sampleData);
+            catch
+                % matfile 失败（比如文件不是 v7.3 格式），回退到 Brainstorm 默认
+                dataUnit = "V";
             end
+            
+        else
+            % ==========================================
+            % 路线 B：通用 .mat 通道
+            % ==========================================
+            metadata.originalFormat = 'GenericMat';
+            
+            loadedData = load(dataPath, '-mat');
+            
+            % 拆俄罗斯套娃
+            outerFields = fieldnames(loadedData);
+            if length(outerFields) == 1 && isstruct(loadedData.(outerFields{1}))
+                loadedData = loadedData.(outerFields{1});
+            end
+            
+            availableFields = fieldnames(loadedData);
+            
+            % 字典
+            dataAliases     = {'data', 'Data', 'DataFile', 'matrix', 'signal', 'EEG'};
+            srateAliases    = {'srate', 'SamplingRate', 'fs', 'sfreq', 'sRate'};
+            chanlocsAliases = {'chanlocs', 'Channel', 'channels', 'chaninfo', ...
+                               'electrodes', 'locs', 'labels'};
+            
+            matchedDataField     = findFirstMatch(dataAliases,     availableFields);
+            matchedSrateField    = findFirstMatch(srateAliases,    availableFields);
+            matchedChanlocsField = findFirstMatch(chanlocsAliases, availableFields);
+            
+            % 数据字段：必须匹配，否则弹窗
+            if isempty(matchedDataField)
+                [indx, tf] = listdlg('ListString', availableFields, ...
+                    'SelectionMode', 'single', ...
+                    'PromptString', {'未识别到标准的【数据矩阵】字段！', ...
+                                     '请在下方选择代表脑电信号的变量:'}, ...
+                    'Name', 'SEAL 数据导入向导 (1/2)', ...
+                    'ListSize', [250, 150]);
+                if tf
+                    matchedDataField = availableFields{indx};
+                else
+                    error('SEAL:Import:UserCancelled', '用户取消了数据字段匹配。');
+                end
+            end
+            
+            % 采样率字段：必须匹配，否则弹窗
+            if isempty(matchedSrateField)
+                [indx, tf] = listdlg('ListString', availableFields, ...
+                    'SelectionMode', 'single', ...
+                    'PromptString', {'未识别到标准的【采样率】字段！', ...
+                                     '请在下方选择代表采样率的变量:'}, ...
+                    'Name', 'SEAL 数据导入向导 (2/2)', ...
+                    'ListSize', [250, 150]);
+                if tf
+                    matchedSrateField = availableFields{indx};
+                else
+                    error('SEAL:Import:UserCancelled', '用户取消了采样率字段匹配。');
+                end
+            end
+            
+            % 提取尺寸和采样率
+            dataMatrix = loadedData.(matchedDataField);
+            dataSize = size(dataMatrix);
+            tempSrate = loadedData.(matchedSrateField);
+            dataSrate = tempSrate(1);   % 防御：可能是数组
+            
+            % 单位检测
+            dataUnit = DataInfo.detectDataUnit(dataMatrix);
+            
+            % 通道位置（可选）
+            if ~isempty(matchedChanlocsField)
+                dataChanlocs = loadedData.(matchedChanlocsField);
+            else
+                dataChanlocs = [];
+            end
+            
+            metadata.targetField = matchedDataField;
         end
+        
+        % ==========================================
+        % 2. 统一出口：创建 DataInfo
+        % ==========================================
+        data = DataInfo(...
+            dataName, ...
+            dataPath, ...
+            "", ...
+            p.Results.Description, ...
+            metadata);
+        
+        data.size     = dataSize;
+        data.srate    = round(dataSrate);
+        data.unit     = dataUnit;
+        data.chanlocs = dataChanlocs;
+        
+    catch ME
+        error('SEAL:DataInfo:ImportFailed', ...
+            '数据提取失败: %s\n详细原因: %s', dataPath, ME.message);
+    end
+end
+
+% 辅助函数：在候选字段中找第一个匹配的别名
+function matched = findFirstMatch(aliases, availableFields)
+    matched = '';
+    for i = 1:length(aliases)
+        if ismember(aliases{i}, availableFields)
+            matched = aliases{i};
+            return;
+        end
+    end
+end
 
         function data = fromEEGLAB(dataPath, varargin)
             %FROMEEGLAB 从 EEGLAB .set 文件直接创建 DataInfo

@@ -80,7 +80,7 @@ classdef DataNode < BaseNode
 
                     % --- 智能字段匹配 ---
                     availableFields = fieldnames(rawData);
-                    dataAliases = {'data', 'Data', 'DataFile', 'matrix', 'signal', 'EEG'};
+                    dataAliases = {'data', 'Data', 'DataFile', 'matrix', 'signal', 'EEG', 'F'};
 
                     matchedField = '';
                     for i = 1:length(dataAliases)

@@ -11,6 +11,7 @@ classdef ResultNode < BaseNode
         resultInfo ResultInfo  % 关联的核心结果数据对象
         res_cache              % 用于缓存庞大的计算结果矩阵（如源激活矩阵）
         sessionpath string
+        
     end
     
     properties (Dependent)

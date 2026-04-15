@@ -64,7 +64,7 @@ hemisphere = [];
 ax2plot = [];
 CLim = [0,1];
 figPosition = []; % 默认不指定位置
-colorMap = CBar('active');
+colorMap = CBar('mjet');
 if ~isempty(SourceData)
     if min(SourceData)<0
         CLim = [-1 1];
@@ -183,7 +183,7 @@ light('Position',[100,0,100]*mean(sum(vc.^2,2)));
 set(handles.axes, 'CameraUpVector', [0, 1, 0]);
 
 if ~isempty(SourceData)
-    [Valpha,cdata]=bulidsource(SourceData,vc,[]);
+    [Valpha,cdata]=bulidsource(SourceData,vc,[],colorMap);
     set(handles.hp,'FaceAlpha','flat','AlphaDataMapping','none',...
         'FaceVertexAlphaData',Valpha, ...
         'FaceVertexCData',cdata,...
