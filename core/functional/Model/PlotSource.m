@@ -183,7 +183,7 @@ light('Position',[100,0,100]*mean(sum(vc.^2,2)));
 set(handles.axes, 'CameraUpVector', [0, 1, 0]);
 
 if ~isempty(SourceData)
-    [Valpha,cdata]=bulidsource(SourceData,vc,[],colorMap);
+    [Valpha,cdata]=seal_bulidsource(SourceData,vc,[],colorMap);
     set(handles.hp,'FaceAlpha','flat','AlphaDataMapping','none',...
         'FaceVertexAlphaData',Valpha, ...
         'FaceVertexCData',cdata,...
@@ -213,7 +213,7 @@ if ~isempty(SourceData)
     % 5. (可选) 保存句柄以便后续操作
     handles.hColorbar = hBar;
 end
-bind3DInteraction(handles.h, handles.axes);
+seal_bind3DInteraction(handles.h, handles.axes);
 
 end
 
