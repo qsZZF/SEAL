@@ -1,4 +1,4 @@
-function [dataClean, locsClean, labelsClean, badIdx, badNames] = runAutoRejectChannels(dataIn, chanlocs, labels, zThresh, corrThresh)
+function [dataClean, locsClean, labelsClean, badIdx, badNames] = seal_runAutoRejectChannels(dataIn, chanlocs, labels, zThresh, corrThresh)
     % 输入：
     % dataIn: ch x time x trials 的三维脑电数据
     % chanlocs: 结构体数组，包含通道坐标

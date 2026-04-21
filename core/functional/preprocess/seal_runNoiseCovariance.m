@@ -1,47 +1,81 @@
-function C_reg = seal_runNoiseCovariance(dataIn, baseStart, baseEnd, lambda)
-    % dataIn: ch x time x trials
-    % baseStart, baseEnd: 基线期在时间维度上的起始和结束索引（点数）
-    % lambda: 正则化系数 (0 到 1 之间)
+function [C_reg, info] = seal_runNoiseCovariance(dataIn, baseStart, baseEnd, lambda)
+%SEAL_RUNNOISECOVARIANCE 计算 EEG 噪声协方差矩阵
+%   Inputs:
+%     dataIn    - ch × time × trials (3D 必需)
+%     baseStart - 基线起点(样本索引)
+%     baseEnd   - 基线终点(样本索引)
+%     lambda    - 收缩系数 [0, 1]
+%   Outputs:
+%     C_reg     - 正则化后协方差矩阵
+%     info      - 元信息结构体(秩、样本数等)
+
+    % ===== 输入校验 =====
+    if ndims(dataIn) ~= 3 || size(dataIn, 3) < 2
+        error('SEAL:NoiseCov:NeedsEpochs', ...
+            '需要 3D 分段数据(ch×time×trials),且至少 2 个 trial');
+    end
+    
+    if ~isfinite(lambda) || lambda < 0 || lambda > 1
+        error('SEAL:NoiseCov:InvalidLambda', ...
+            'lambda 必须在 [0, 1],当前 %g', lambda);
+    end
     
     [nCh, nTime, nTrials] = size(dataIn);
     
-    % 检查基线范围的合法性
-    if ~isfinite(baseStart) || ~isfinite(baseEnd) || baseStart < 1 || baseEnd > nTime || baseStart >= baseEnd
-        error('基线点范围设置不合法。当前数据总点数为 %d。', nTime);
+    if ~isfinite(baseStart) || ~isfinite(baseEnd) || ...
+       baseStart < 1 || baseEnd > nTime || baseStart >= baseEnd
+        error('SEAL:NoiseCov:InvalidBaseline', ...
+            '基线范围非法 [%g, %g],数据长度 %d', baseStart, baseEnd, nTime);
     end
     
-    % 截取基线期数据
-    baselineData = dataIn(:, baseStart:baseEnd, :);
-    nBasePoints = size(baselineData, 2);
+    % ===== 提取并去均值(向量化) =====
+    X = double(dataIn(:, baseStart:baseEnd, :));  % ch × T × Tr
+    nBasePoints = size(X, 2);
+    nSamples = nBasePoints * nTrials;
     
-    % 初始化协方差矩阵
-    C_empirical = zeros(nCh, nCh);
+    % 逐 trial 去均值(隐式扩展)
+    X = X - mean(X, 2);
     
-    % 逐 trial 计算并累加协方差
-    for tr = 1:nTrials
-        % 取出当前 trial 的基线数据: ch x time
-        tmp = double(baselineData(:, :, tr));
-        
-        % 去除每个通道基线期的直流偏移（Mean centering）
-        tmp = tmp - mean(tmp, 2);
-        
-        % 计算协方差并累加 (除以 n-1 是无偏估计)
-        C_empirical = C_empirical + (tmp * tmp') / (nBasePoints - 1);
+    % 展平为 2D
+    X2d = reshape(X, nCh, nSamples);
+    
+    % ===== Pooled 协方差(一次矩阵乘) =====
+    C_empirical = (X2d * X2d') / (nSamples - 1);
+    
+    % ===== Tikhonov shrinkage =====
+    if ~isfinite(lambda) || lambda < 0 || lambda > 1
+        error('SEAL:NoiseCov:InvalidLambda', ...
+            'lambda 必须在 [0, 1] 范围内,当前 %g', lambda);
     end
-    
-    % 取所有 trials 的平均
-    C_empirical = C_empirical / nTrials;
-    
-    % ==========================================
-    % 矩阵正则化 (Tikhonov / Shrinkage Regularization)
-    % 解决插值或平均参考导致的矩阵不满秩问题
-    % ==========================================
+
     if lambda > 0
-        % 计算矩阵的迹的平均值（对角线元素的平均）
         meanTrace = trace(C_empirical) / nCh;
-        % 将经验协方差矩阵向单位矩阵（按比例缩放后）收缩
         C_reg = (1 - lambda) * C_empirical + lambda * meanTrace * eye(nCh);
     else
         C_reg = C_empirical;
+    end
+
+    % ===== 元信息 =====
+    if nargout > 1
+        tol = 1e-8 * max(diag(C_empirical));
+        info.rank_empirical = rank(C_empirical, tol);
+        info.rank_reg = rank(C_reg);
+        info.shrinkage = lambda;
+        info.nSamples = nSamples;
+        info.nChannels = nCh;
+        info.nTrials = nTrials;
+        info.baselineRange = [baseStart, baseEnd];
+        
+        if nSamples < 5 * nCh
+            warning('SEAL:NoiseCov:Undersampled', ...
+                '样本数(%d)/通道数(%d) 比值偏低,估计可能不稳定', ...
+                nSamples, nCh);
+        end
+        
+        if info.rank_empirical < nCh
+            warning('SEAL:NoiseCov:RankDeficient', ...
+                '经验协方差秩亏 (rank=%d / %d),通常源于平均参考、坏导插值或 ICA 剔除', ...
+                info.rank_empirical, nCh);
+        end
     end
 end

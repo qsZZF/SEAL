@@ -3,16 +3,26 @@ function [data_out, fs_out] = seal_applyDownsampleResample(data_in, fs_in, D)
     fs_in = double(fs_in);
     data_in = double(data_in);
     
-    [nCh, nT, nTr] = size(data_in);
-    
+    sz = size(data_in);
+    nCh = sz(1);
+    nT  = sz(2);
+    nTr = size(data_in, 3);  % 显式取第 3 维,2D 时自动返回 1
+
     % 降采样因子 → 有理数 p/q
     if abs(D - round(D)) < 1e-9
         p = 1; q = round(D);
     else
         [p, q] = rat(1/D, 1e-6);
         if q > 200
-            q = max(2, round(D)); p = 1;
-            warning('非整数降采样因子已近似为 D=%d', q);
+            % 用 round(D) 作为更稳的近似
+            q_approx = max(2, round(D));
+            p_approx = 1;
+            actual_D = q_approx / p_approx;
+            warning('SEAL:Resample:InexactRatio', ...
+                '原始 D=%.4f 的有理近似分母过大(q=%d),已退化为 D=%.4f', ...
+                D, q, actual_D);
+            p = p_approx;
+            q = q_approx;
         end
     end
     

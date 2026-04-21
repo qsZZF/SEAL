@@ -300,8 +300,23 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
 
             total_samples_needed = Ntimepoints + params.burn_in_samples;
             innovation_noise = sqrt(params.innovation_variance) * randn(1, total_samples_needed);
-            
-            ar_signal_full = filter(1, filter_coeffs, innovation_noise);
+
+            ar_coeffs = ar_coeffs(:)';  % 行向量
+            %% 按 filter 函数的约定构造分母
+            filter_a = [1, -ar_coeffs];
+
+            % 稳定性检查
+            poles = roots(filter_a);
+            if any(abs(poles) >= 1)
+                warning('AR 模型不稳定（极点在单位圆外/上）,可能发散');
+                % 投影到单位圆内
+                poles(abs(poles) >= 1) = 0.95 * poles(abs(poles) >= 1) ./ abs(poles(abs(poles) >= 1));
+                filter_a = poly(poles);
+            end
+
+            ar_signal_full = filter(1, filter_a, innovation_noise);
+%%
+            % ar_signal_full = filter(1, filter_coeffs, innovation_noise);
             
             if length(ar_signal_full) > params.burn_in_samples
                 ar_signal = ar_signal_full(params.burn_in_samples + 1 : params.burn_in_samples + Ntimepoints);
@@ -384,31 +399,9 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
     end
 end
 
-% pink noise
-function noise_channel = seal_generate_pink_noise_channel(n_samples)
-    if n_samples == 0, noise_channel = []; return; end
-    n_fft = 2^nextpow2(n_samples); 
-    
-    f = linspace(0, 1, n_fft/2 + 1); 
-    inv_f_spectrum = zeros(size(f));
-    inv_f_spectrum(f > 0) = 1./sqrt(f(f > 0)); 
-    inv_f_spectrum(1) = 0; 
 
-    random_phases = exp(1i * 2 * pi * rand(size(f)));
-    half_spectrum = inv_f_spectrum .* random_phases;
-    
-    full_spectrum = zeros(1, n_fft);
-    full_spectrum(1:n_fft/2+1) = half_spectrum;
-    if n_fft/2+2 <= n_fft % Ensure indices are valid for fliplr
-        full_spectrum(n_fft/2+2:end) = conj(fliplr(half_spectrum(2:end-1)));
-    end
 
-    noise_channel_temp = real(ifft(full_spectrum, n_fft));
-    noise_channel = noise_channel_temp(1:n_samples); 
-    noise_channel = noise_channel(:)'; 
-end
-
-% merge default and user-provided structs
+%% merge default and user-provided structs
 function S_out = merge_structs(S_user, S_default)
     S_out = S_default;
     if ~isstruct(S_user) || isempty(S_user) 

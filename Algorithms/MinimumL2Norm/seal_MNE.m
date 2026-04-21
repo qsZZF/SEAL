@@ -124,17 +124,24 @@ Data_w = Data_orig;
 
 if ~isequal(C_noise, eye(Nchannels))
     try  
-        % SVD based whitening for non-positive definite or ill-conditioned C
+        % SVD based whitening for non-positive definite or ill-conditioned C.
+        % Use a numerical-rank-based truncation: directions whose singular
+        % values are below machine precision relative to the largest one
+        % are treated as null-space and dropped (iW rows set to 0).
+        % This preserves the fundamental property that, up to rank,
+        % iW * C_noise * iW' = I, unlike arbitrary quantile-based thresholding.
         [U_c, S_c, ~] = svd((C_noise + C_noise')/2);
         s_c = diag(S_c);
-        quan_c = quantile(s_c, 0.25);
-        s_c(s_c < quan_c) = quan_c;
-        iW = diag(1./sqrt(s_c)) * U_c';
-%         tol_c = max(size(C_noise)) * eps(max(s_c));
-%         rank_c = sum(s_c > tol_c);
-%         s_inv_sqrt_c = zeros(size(s_c));
-%         s_inv_sqrt_c(1:rank_c) = 1./sqrt(s_c(1:rank_c));
-%         iW = diag(s_inv_sqrt_c) * U_c'; % More robust whitening matrix
+        tol_c = max(size(C_noise)) * eps(max(s_c));
+        rank_c = sum(s_c > tol_c);
+        s_inv_sqrt_c = zeros(size(s_c));
+        s_inv_sqrt_c(1:rank_c) = 1./sqrt(s_c(1:rank_c));
+        iW = diag(s_inv_sqrt_c) * U_c';
+        if rank_c < Nchannels
+            warning('seal_MNE:NoiseCovRankDeficient', ...
+                'NoiseCovariance is rank-deficient (rank = %d / %d). %d null directions dropped.', ...
+                rank_c, Nchannels, Nchannels - rank_c);
+        end
         L_w = iW * L_orig;
         if ~isempty(Data_orig)
             Data_w = iW * Data_orig;
@@ -170,6 +177,7 @@ elseif ischar(Rs_input) || isstring(Rs_input)
     switch lower(Rs_input)
         case 'none'
             Rs = speye(Nsources_total);
+            Rc = speye(Nsources_total); % Rs^{1/2} = I
         case 'depth_weighted'         
             Lw_norm_sq = sum(L_orig.^2,1);   % based on original L         
             if nd == 1               
@@ -180,19 +188,25 @@ elseif ischar(Rs_input) || isstring(Rs_input)
             low_bound = max(col_norms_Lw)./100; % avoid too small values
             col_norms_Lw(col_norms_Lw < low_bound) = low_bound;
             Rs_spatial_diag_weights = (max(col_norms_Lw) ./ col_norms_Lw);
-            Rs_spatial = sparse(diag(Rs_spatial_diag_weights.^2));
+            % Rs diagonal elements are w^2, so Rs^{1/2} diagonal elements are w.
+            Rs_spatial      = sparse(diag(Rs_spatial_diag_weights.^2));
+            Rs_spatial_sqrt = sparse(diag(Rs_spatial_diag_weights));
             
             if nd > 1
                 Rs = kron(Rs_spatial, eye(nd));
+                Rc = kron(Rs_spatial_sqrt, eye(nd));
             else
                 Rs = Rs_spatial;
+                Rc = Rs_spatial_sqrt;
             end
-            % Calculate weighted L_w
-            L_w = L_w* Rs;
+            % Apply Rs^{1/2} to the lead field, consistent with the matrix branch:
+            %   Gram = L_w * L_w' + lambda^2 I = L * Rs * L' + lambda^2 I
+            %   M_w  = Rc * L_w' / Gram       = Rs^{1/2} * (L * Rs^{1/2})' / Gram
+            %                                 = Rs * L' * (L * Rs * L' + lambda^2 I)^{-1}
+            L_w = L_w * Rc;
         otherwise
             error('seal_MNE:InvalidSourceCovString', 'Unknown string for SourceCovariance.');
     end
-    Rc = speye(Nsources_total);
 else
     error('seal_MNE:InvalidSourceCovType', 'SourceCovariance must be a matrix or a valid string.');
 end

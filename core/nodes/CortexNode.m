@@ -137,12 +137,26 @@ classdef CortexNode < BaseNode
                 obj.cache.Vertices = rawData.(matchedVert);
                 obj.cache.Faces = rawData.(matchedFaces);
                 obj.cache.VertConn = rawData.(matchedConn);
+
+                %Atlas校验
                 if ~isempty(matchedAtlas)
-                    obj.cache.Atlas = rawData.(matchedAtlas);
+                    A = rawData.(matchedAtlas);
+                    ok = isstruct(A) && all(isfield(A, {'Name','Scouts'}));
+                    if ok
+                        s1 = A(1).Scouts;
+                        ok = isstruct(s1) && all(isfield(s1, {'Vertices','Region','Color'}));
+                    end
+                    if ~ok
+                        warning('SEAL:CortexNode:AtlasFormat', ...
+                            'Atlas 缺少必需字段 (Name / Scouts / Scouts.Vertices / Region / Color)，已置空。');
+                        obj.cache.Atlas = [];
+                    else
+                        obj.cache.Atlas = A;
+                    end
                 else
-                    obj.cache.Atlas = []; % 兜底为空
+                    obj.cache.Atlas = [];
                 end
-                
+
                 % (函数结束，庞杂的 rawData 被内存自动回收，只留下纯净的 obj.data_cache)
                 obj.isLoaded = true;
             end

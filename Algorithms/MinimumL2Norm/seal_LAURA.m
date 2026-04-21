@@ -18,7 +18,21 @@ function [Source_LAURA, Param_LAURA] = seal_LAURA(Data, L, sourceSpaceInfo, vara
 %                                          Set to 0 for no additional depth weighting beyond Laplacian.
 %       'Exponent_e_LAURA' (double): Exponent e_i for LAURA operator A. Default: 2.
 %       'MaxNeighborsN_LAURA' (integer): Max neighbors N for LAURA operator A. Default: 9 for 2D cortex.
+%       'LauReg' (double): Tikhonov regularisation factor applied to LAU = A'*A,
+%                          which is otherwise singular (A has row sums of order
+%                          zero when N_maxNeighbor matches actual neighbour counts).
+%                          LAU <- LAU + LauReg * trace(LAU)/N * I. Default: 1e-4.
 %       % Other parameters for seal_MNE can be passed.
+%
+%   Source covariance construction:
+%       A_ij = -(d_ij / d_min)^{-e} for i a neighbour of j (d_min = min
+%           neighbour distance; dividing by d_min makes the operator
+%           invariant to the units of VertLoc).
+%       A_ii = (N_max / n_neighbours_i) * sum_j |A_ij|.
+%       LAU  = A'*A + LauReg * trace(A'*A)/N * I.
+%       Rs   = inv(LAU)                              (SourceCovariance='none'), or
+%       Rs   = diag(w) * inv(LAU) * diag(w)          ('depth_weighted'),
+%       with w_i = max(||L_i||^p) / ||L_i||^p, p = DepthWeightingExponent.
 %
 %   Outputs:
 %       Source_LAURA (double matrix): Nsources x Ntimepoints LAURA estimates.
@@ -42,6 +56,9 @@ defaultDepthWeightExp = 1; % (1/norm)^1 for depth weighting
 defaultExponent_e_LAURA = 2; % From refer [1]
 defaultMaxNeighborsN_LAURA = 9; % In refer [1] 26 is used for 3D volume. Here set to 9 for 2D cortex by default
 defaultSourceCov = 'depth_weighted'; % Default to automatic depth weighting
+defaultLauReg = 1e-4;  % Tikhonov regularization for LAU = A'*A, which is
+                       % singular/near-singular in theory (A has near-zero
+                       % row sums). Without this, inv(LAU) is ill-posed.
 
 addRequired(p, 'Data', @(x) isnumeric(x) && ismatrix(x));
 addRequired(p, 'L', @(x) isnumeric(x) && ismatrix(x));
@@ -54,6 +71,7 @@ addParameter(p, 'Exponent_e_LAURA', defaultExponent_e_LAURA, @isscalar);
 addParameter(p, 'MaxNeighborsN_LAURA', defaultMaxNeighborsN_LAURA, @isscalar);
 addParameter(p, 'SourceCovariance', defaultSourceCov);
 addParameter(p, 'DepthWeightingExponent', defaultDepthWeightExp, @(x) isnumeric(x) && isscalar(x));
+addParameter(p, 'LauReg', defaultLauReg, @(x) isnumeric(x) && isscalar(x) && x >= 0);
 
 try
     parse(p, Data, L, sourceSpaceInfo, varargin{:});
@@ -78,23 +96,54 @@ VertConn = p.Results.sourceSpaceInfo.VertConn;
 VertLoc = p.Results.sourceSpaceInfo.Vertices;
 exponent_e = p.Results.Exponent_e_LAURA;
 N_maxNeighbor = p.Results.MaxNeighborsN_LAURA;
+LauReg = p.Results.LauReg;
 
-
-dist_mat = inf(Nsources_locations,Nsources_locations);
+% Build dist_mat(i, j) = ||VertLoc(i,:) - VertLoc(j,:)|| if i is a neighbour
+% of j (and i != j); inf otherwise. We use find() on each column so that
+% VertConn can be either a logical or a (sparse) numeric 0/1 adjacency
+% matrix -- VertConn(:,iter) used directly as a subscript is unreliable
+% across these two types.
+dist_mat = inf(Nsources_locations, Nsources_locations);
 for iter = 1:Nsources_locations
-    t_dist = sqrt(sum((repmat(VertLoc(iter,:),Nsources_locations,1) - VertLoc).^2,2));    
-    dist_mat(VertConn(:,iter),iter) = t_dist(VertConn(:,iter));
+    nb = find(VertConn(:, iter));
+    nb(nb == iter) = [];   % exclude self-loops so D_min > 0 is guaranteed
+    if isempty(nb)
+        continue;
+    end
+    t_dist = sqrt(sum((VertLoc(nb, :) - VertLoc(iter, :)).^2, 2));
+    dist_mat(nb, iter) = t_dist;
 end
-D_min = min(min(dist_mat));
-dist_mat = dist_mat./sqrt(D_min);
-dist_mat = -dist_mat.^(-exponent_e);
-dist_mat(isinf(dist_mat)) = 0;
-dist_mat = dist_mat + diag((N_maxNeighbor ./ sum(dist_mat<0,2)).*sum(-dist_mat,2));
+
+% Non-dimensionalise the distances by the minimum neighbour distance so that
+% the constructed operator is invariant to the units of VertLoc (mm vs m).
+% Dividing by D_min (not sqrt(D_min)) is what makes d_ij/D_min dimensionless;
+% the sqrt in the original code left d^{1/2} units in and caused the whole
+% operator to rescale by a factor of scale^e under a units change.
+D_min = min(dist_mat(isfinite(dist_mat)));
+if isempty(D_min) || D_min <= 0
+    error('seal_LAURA:InvalidMinDistance', ...
+        'Could not determine a positive minimum neighbour distance. Check VertConn/Vertices.');
+end
+dist_mat = dist_mat ./ D_min;
+dist_mat = -dist_mat.^(-exponent_e);   % A_ij = -(d_ij/D_min)^{-e} on neighbours
+dist_mat(isinf(dist_mat)) = 0;         % non-neighbours (were inf) -> 0
+% Diagonal weighting from Grave de Peralta et al. (2001): scale so that
+% diag(A) = (N_max / n_neighbours_i) * sum_j |A_ij|. For locations whose
+% realised neighbour count equals N_maxNeighbor this makes A have row sum 0
+% (a proper difference operator); otherwise the scaling differs from 1.
+neighbor_count = sum(dist_mat < 0, 2);
+neighbor_count(neighbor_count == 0) = 1;   % avoid 0/0 for isolated vertices
+dist_mat = dist_mat + diag((N_maxNeighbor ./ neighbor_count) .* sum(-dist_mat, 2));
 dist_mat = sparse(dist_mat);
 
-LAU = dist_mat*dist_mat';
+% A'*A is singular in exact arithmetic whenever A has a zero row-sum (the
+% constant vector lies in its null space), and is badly conditioned more
+% generally. Apply a small Tikhonov regulariser so that inv(LAU) is
+% well-defined numerically. Matches the equivalent LaplacianRegFactor used
+% by seal_LORETA.
+LAU = dist_mat * dist_mat';
+LAU = LAU + LauReg * trace(LAU)/Nsources_locations * speye(Nsources_locations);
 
-% LAU = LAU + 1e-4 * trace(LAU)/Nsources_locations * speye(Nsources_locations);
 %% 2. Determine Source Covariance
 if isnumeric(Rs_input) && ismatrix(Rs_input)
     % User provided Rs directly

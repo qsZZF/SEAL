@@ -90,35 +90,66 @@ for i = 1:numel(ROIs)
     waveform_params = roi.waveform_params;
     waveform = seal_generate_waveform(time_vector, waveform_params.samplingRate, waveform_params.waveformtype, waveform_params);
     simulated_series(i,:) = waveform;
-    spatial_weights{i} = ones(size(waveform,1),1);
-%     waveform = repmat(waveform,length(patch_indices),1);
-    % --- 3. Activity Assignment with Gaussian Falloff ---
-    % Calculate a standard deviation for the Gaussian spatial falloff.
-    if isfield(waveform_params, 'decay')
-     % Get coordinates of the center (seed) vertex
-    center_coords = cortex.Vertices(center_vertex_idx, :);
 
-    % Get coordinates of all vertices in the generated patch
-    patch_coords = cortex.Vertices(patch_indices, :);
-
-    % Calculate Euclidean distance from the center to all vertices in the patch
-    patch_distances = sqrt(sum((patch_coords - center_coords).^2, 2));
     
-    half_amplitude_dist = waveform_params.decay;
-    sigma2 = half_amplitude_dist.^2/log(2);
-    
-    % Calculate the Gaussian weights for a smooth spatial falloff
-    % The weight is 1 at the center and decreases towards the edge.
-    gaussian_weights = exp(-patch_distances.^2 / sigma2);
-    
-    % Combine the spatial weights with the temporal waveform
-    % The result is a matrix where each row is the scaled waveform for one vertex
-    spatial_weights{i} = gaussian_weights;
-%     waveform = gaussian_weights .* waveform;
+   % --- 3. Spatial Weight Calculation ---
+    % Determine decay model (default: 'gaussian' for backward compatibility)
+    if isfield(waveform_params, 'decay_model') && ~isempty(waveform_params.decay_model)
+        decay_model = lower(waveform_params.decay_model);
+    else
+        decay_model = 'gaussian';
     end
-    % Add the activity of the current patch to the main source matrix 'S'.
-    % Using addition allows for the linear superposition of overlapping patches.
-%     S(patch_indices, :) = S(patch_indices, :) + waveform;
+ 
+    % Get coordinates of the center (seed) vertex and all patch vertices
+    center_coords = cortex.Vertices(center_vertex_idx, :);
+    patch_coords  = cortex.Vertices(patch_indices, :);
+    patch_distances = sqrt(sum((patch_coords - center_coords).^2, 2));
+ 
+    switch decay_model
+        case 'flat'
+            % Uniform amplitude across the whole patch
+            w = ones(length(patch_indices), 1);
+ 
+        case 'gaussian'
+            if ~isfield(waveform_params, 'decay') || isempty(waveform_params.decay)
+                % No decay specified -> fall back to flat (legacy behaviour)
+                w = ones(length(patch_indices), 1);
+            else
+                half_amp = waveform_params.decay;            % half-amplitude distance (m)
+                sigma2   = half_amp.^2 / log(2);
+                w = exp(-patch_distances.^2 / sigma2);
+            end
+ 
+        case 'linear'
+            if ~isfield(waveform_params, 'decay') || isempty(waveform_params.decay)
+                w = ones(length(patch_indices), 1);
+            else
+                zero_dist = waveform_params.decay;           % distance where w reaches 0 (m)
+                w = max(0, 1 - patch_distances / zero_dist);
+            end
+ 
+        case 'exponential'
+            if ~isfield(waveform_params, 'decay') || isempty(waveform_params.decay)
+                w = ones(length(patch_indices), 1);
+            else
+                half_amp = waveform_params.decay;            % half-amplitude distance (m)
+                tau      = half_amp / log(2);
+                w = exp(-patch_distances / tau);
+            end
+ 
+        otherwise
+            warning('seal_generate_source_activity:UnknownDecayModel', ...
+                'Unknown decay_model "%s". Falling back to Gaussian.', decay_model);
+            if isfield(waveform_params, 'decay') && ~isempty(waveform_params.decay)
+                half_amp = waveform_params.decay;
+                sigma2   = half_amp.^2 / log(2);
+                w = exp(-patch_distances.^2 / sigma2);
+            else
+                w = ones(length(patch_indices), 1);
+            end
+    end
+ 
+    spatial_weights{i} = w;
 end
 
 if simu_corr == 1

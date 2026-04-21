@@ -67,7 +67,7 @@ DepthExp = p.Results.DepthWeightingExponent;
 srcInfo = p.Results.sourceSpaceInfo;
 
 if size(srcInfo.VertConn,1) ~= Nsources_locations || size(srcInfo.Vertices,1) ~= Nsources_locations
-    error('seal_LAURA_Rs:SourceInfoDimMismatch', 'VertConn/VertLoc dimensions do not match Nsources_locations.');
+    error('seal_LOGURA_Rs:SourceInfoDimMismatch', 'VertConn/VertLoc dimensions do not match Nsources_locations.');
 end
 %% 1. Compute LOGURA Operator 
 VertConn = p.Results.sourceSpaceInfo.VertConn;
