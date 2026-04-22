@@ -17,6 +17,7 @@ classdef CortexNode < BaseNode
         name string
         data
         infoFile string
+        sizee
     end
     
     methods
@@ -141,14 +142,13 @@ classdef CortexNode < BaseNode
                 %Atlas校验
                 if ~isempty(matchedAtlas)
                     A = rawData.(matchedAtlas);
-                    ok = isstruct(A) && all(isfield(A, {'Name','Scouts'}));
-                    if ok
-                        s1 = A(1).Scouts;
-                        ok = isstruct(s1) && all(isfield(s1, {'Vertices','Region','Color'}));
+                    ok = isstruct(A) && isfield(A, 'Name') && isfield(A, 'Scouts');
+                    if ok && ~isempty(A(1).Scouts)
+                        ok = isstruct(A(1).Scouts) && isfield(A(1).Scouts, 'Vertices');
                     end
                     if ~ok
                         warning('SEAL:CortexNode:AtlasFormat', ...
-                            'Atlas 缺少必需字段 (Name / Scouts / Scouts.Vertices / Region / Color)，已置空。');
+                            'Atlas 缺少必需字段 (Name / Scouts / Scouts.Vertices)，已置空。');
                         obj.cache.Atlas = [];
                     else
                         obj.cache.Atlas = A;
@@ -187,7 +187,16 @@ classdef CortexNode < BaseNode
         function path = get.infoFile(obj)
             path = fullfile(obj.path, "cortex_info.mat");
         end
+
+        function rsize = get.sizee(obj)
+            rsize = size(obj.data.Vertices);
+        end
     
+        function metadata = getMetadata(obj)
+            metadata =  obj.getMetadata@BaseNode();
+            metadata = [metadata;
+                "Size", mat2str(obj.sizee)];
+        end
     end
 
     methods (Static)

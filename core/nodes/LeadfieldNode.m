@@ -17,7 +17,7 @@ classdef LeadfieldNode < BaseNode
         name string
         data
         infoFile string
-
+        sizee
         headModelType string
         orientation
         normals
@@ -130,7 +130,6 @@ classdef LeadfieldNode < BaseNode
                     if ismember(normalAliases{i}, availableFields)
                         % 提取法向量并存入属性
                         obj.leadfieldInfo.normals = rawData.(normalAliases{i});
-                        disp(['✅ 成功识别并提取法向量 (匹配字段: ', normalAliases{i}, ')']);
                         break; % 找到了就立刻停止搜寻
                     end
                 end
@@ -166,6 +165,46 @@ classdef LeadfieldNode < BaseNode
         function deleteFromDisk(obj)
             delete(obj.infoFile);
         end
+
+
+        function str = computeOrientationString(obj)
+            %COMPUTEORIENTATIONSTRING 基于 orientation 数值生成可读描述
+            ratio = obj.orientation;   % 只读一次，不再触发计算链
+
+            if isempty(ratio) || ~isnumeric(ratio) || ~isscalar(ratio)
+                str = mat2str(ratio);
+                return;
+            end
+
+            switch ratio
+                case 1
+                    str = "Constrained (1 - Normal to cortex)";
+                case 3
+                    str = "Unconstrained (3 - Free orientation)";
+                case 2
+                    str = "Loose (2)";
+                otherwise
+                    str = sprintf("Unknown (ratio = %.3f)", ratio);
+            end
+        end
+
+        function cortexNode = findSiblingCortex(obj)
+            %FINDSIBLINGCORTEX 在父节点下查找同级的 CortexNode
+            cortexNode = [];
+
+            if isempty(obj.parent) || ~isprop(obj.parent, 'children')
+                return;
+            end
+
+            siblings = obj.parent.children;
+            for i = 1:numel(siblings)
+                if isa(siblings(i), 'CortexNode')
+                    cortexNode = siblings(i);
+                    return;
+                end
+            end
+        end
+
         
         %% 依赖属性get方法
         function leadfieldName = get.name(obj)
@@ -177,9 +216,35 @@ classdef LeadfieldNode < BaseNode
         end
 
         function ori = get.orientation(obj)
+            % 默认值：无法判断时回退到存储值
             ori = obj.leadfieldInfo.orientation;
+
+            try
+                cortexNode = obj.findSiblingCortex();
+                if isempty(cortexNode)
+                    return;
+                end
+
+                lfSize = obj.sizee;         % [nChannels, nCols]
+                cxSize = cortexNode.sizee;   % [nVertices, 3]
+
+                if numel(lfSize) < 2 || numel(cxSize) < 2
+                    return;
+                end
+
+                nCols = lfSize(2);
+                nVertices = cxSize(1);
+
+                if nVertices == 0
+                    return;
+                end
+
+                ori = nCols / nVertices;
+            catch
+                % 出错就保持默认值
+            end
         end
-        
+
         function data = get.data(obj)
             if ~obj.isLoaded
                 obj.load();
@@ -191,11 +256,17 @@ classdef LeadfieldNode < BaseNode
             path = fullfile(obj.path, "leadfield_info.mat");
         end
 
+        function rsize = get.sizee(obj)
+            rsize = size(obj.data);
+        end
+
         function metadata = getMetadata(obj)
+             %orientationStr = obj.computeOrientationString();
             metadata =  obj.getMetadata@BaseNode();
             metadata = [metadata;
                 "Head Model Type", string(obj.headModelType);
-                "Orientation", mat2str(obj.orientation)];
+                "Orientation", obj.orientation;
+                 "Size", mat2str(obj.sizee)];
         end
     
         function n = get.normals(obj)

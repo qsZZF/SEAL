@@ -196,10 +196,9 @@ classdef CortexInfo < handle
                 metadata.FaceCount = size(loadedData.(matchedFaces), 1);
                 metadata.HasAtlas = ~isempty(matchedAtlas);
                 
-                % 【精髓】：把千辛万苦匹配到的真名，作为“暗号”写进签证里！
                 metadata.Key_Vertices = matchedVert;
-                metadata.Key_VertConn = matchedFaces;
-                metadata.Key_Atlas = matchedAtlas;
+                metadata.Key_Faces    = matchedFaces;
+                metadata.Key_Atlas    = matchedAtlas;
                 metadata.Key_VertConn = matchedConn;
                 % ==========================================
                 % 5. 准许入境：创建对象

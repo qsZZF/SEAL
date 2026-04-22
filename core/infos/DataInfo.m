@@ -336,33 +336,72 @@ classdef DataInfo < handle
                 % ==========================================
                 tempStruct = load(dataPath, '-mat');
 
-                if ~isfield(tempStruct, 'EEG')
-                    error('文件内未找到 "EEG" 结构体，这可能不是标准的 EEGLAB .set 文件。');
+                % ==========================================
+                % 2. 兼容两种 .set 保存结构：嵌套 vs 展平
+                % ==========================================
+                if isfield(tempStruct, 'EEG') && isstruct(tempStruct.EEG)
+                    % 情况 1: 老式嵌套保存，整个 EEG 结构体作为一个变量
+                    EEG = tempStruct.EEG;
+                elseif isfield(tempStruct, 'data') && isfield(tempStruct, 'srate')
+                    % 情况 2: 展平保存（save -struct），字段直接是顶层变量
+                    EEG = tempStruct;
+                else
+                    error('SEAL:DataInfo:InvalidSet', ...
+                        '文件不是有效的 EEGLAB .set 文件：既未找到 "EEG" 结构体，也未找到展平的 EEG 字段 (data, srate 等)。');
                 end
 
-                EEG = tempStruct.EEG;
                 metadata = p.Results.Metadata;
-                % ==========================================
-                % 3. 核心：判断并读取外部 .fdt 数据文件
-                % ==========================================
-                if ischar(EEG.data) || isstring(EEG.data)
-                    fdtFilename = char(EEG.data);
-                    [setDir, ~, ~] = fileparts(dataPath);
 
-                    % 拼接出 .fdt 文件的完整路径
+                % ==========================================
+                % 3. 核心：判断数据存储模式并定位数据来源
+                % ==========================================
+                [setDir, setName, ~] = fileparts(dataPath);
+                metadata.dataMode = '';
+                metadata.fdtPath  = '';
+
+                dataField = EEG.data;
+
+                if ischar(dataField) || isstring(dataField)
+                    % --- 双文件模式：EEG.data 存的是 .fdt 文件名 ---
+                    fdtFilename = char(dataField);
                     fdtPath = fullfile(setDir, fdtFilename);
+
+                    % 回退 1: 原字段可能是其他机器的绝对路径，只取文件名
+                    if ~isfile(fdtPath)
+                        [~, fdtBase, fdtExt] = fileparts(fdtFilename);
+                        fdtPath = fullfile(setDir, [fdtBase, fdtExt]);
+                    end
+
+                    % 回退 2: 按 .set 同名找 .fdt
+                    if ~isfile(fdtPath)
+                        fdtPath = fullfile(setDir, [setName, '.fdt']);
+                    end
 
                     if ~isfile(fdtPath)
                         error('SEAL:DataInfo:MissingFDT', ...
                             '数据依赖外部文件但未找到：%s\n请确保 .set 和 .fdt 文件在同一文件夹下。', fdtFilename);
                     end
 
+                    metadata.dataMode = 'external';
+                    metadata.fdtPath  = fdtPath;
 
-                    % ==========================================
-                    % 4. 提取与封装元数据 (Metadata)
-                    % ==========================================
+                elseif isnumeric(dataField) && ~isempty(dataField)
+                    % --- 单文件模式：数据矩阵内嵌在 .set 里 ---
+                    metadata.dataMode = 'inline';
+                    metadata.fdtPath  = '';
 
-                    metadata.fdtPath = fdtPath;
+                else
+                    % --- 兜底：data 为空但同目录有同名 .fdt ---
+                    fallbackFdt = fullfile(setDir, [setName, '.fdt']);
+                    if isfile(fallbackFdt)
+                        warning('SEAL:DataInfo:RecoveredFDT', ...
+                            'EEG.data 为空，但在同目录发现同名 .fdt，按外部文件方式加载：%s', fallbackFdt);
+                        metadata.dataMode = 'external';
+                        metadata.fdtPath  = fallbackFdt;
+                    else
+                        error('SEAL:DataInfo:NoData', ...
+                            'EEG.data 为空，且未在同目录找到对应 .fdt 文件，无法定位数据。');
+                    end
                 end
                 metadata.originalFormat = 'EEGLAB';
                 metadata.nbchan = EEG.nbchan;
