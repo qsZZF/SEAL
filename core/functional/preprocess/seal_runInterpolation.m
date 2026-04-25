@@ -1,33 +1,41 @@
 function dataOut = seal_runInterpolation(dataIn, chanLocs, badIdx, method, k, radius, useTemplate)
+    % ===== 维度归一化:统一按 3D 处理,函数末尾还原 =====
+    wasMatrix = (ismatrix(dataIn));
+    if wasMatrix
+        dataIn = reshape(dataIn, size(dataIn,1), size(dataIn,2), 1);
+    end
+    
     dataOut = dataIn;
     goodIdx = setdiff(1:numel(chanLocs), badIdx);
-
-    % 拿到 3D 单位球坐标
-    P = ensureXYZ(chanLocs);    % ch×3，单位化；见下
+    
+    P = ensureXYZ(chanLocs);
     Pg = P(goodIdx,:); Pb = P(badIdx,:);
-
+    
     switch method
         case 'spherical-spline'
-            % 如果有 EEGLAB 的 eeg_interp，用它（最好效果）
             if exist('eeg_interp','file')==2
-                % 包个最小 EEG 结构在内存中转一下
-                EEGtmp.data = dataIn; EEGtmp.nbchan=size(dataIn,1); EEGtmp.trials=size(dataIn,3);
-                EEGtmp.pnts = size(dataIn,2); EEGtmp.srate = 1;
-                EEGtmp.chanlocs = chanLocs; EEGtmp.icachansind = 1:EEGtmp.nbchan;
+                EEGtmp.data = dataIn; 
+                EEGtmp.nbchan = size(dataIn,1);
+                EEGtmp.trials = size(dataIn,3);
+                EEGtmp.pnts = size(dataIn,2); 
+                EEGtmp.srate = 1;
+                EEGtmp.chanlocs = chanLocs; 
+                EEGtmp.icachansind = 1:EEGtmp.nbchan;
                 dataOut = eeg_interp(EEGtmp, badIdx, 'spherical').data;
             else
-                % 纯 MATLAB 兜底：基于球面 RBF（thin-plate）近似
                 dataOut = interp_rbf_sphere(dataIn, Pg, Pb, goodIdx, badIdx);
             end
-
-        case 'idw'      % inverse distance weighting on sphere
+        case 'idw'
             dataOut = interp_idw_sphere(dataIn, P, goodIdx, badIdx, k, radius);
-
         case 'nearest'
             dataOut = interp_nearest_sphere(dataIn, P, goodIdx, badIdx);
-
         otherwise
-            error('未知插值方法：%s', method);
+            error('未知插值方法:%s', method);
+    end
+    
+    % ===== 还原维度 =====
+    if wasMatrix
+        dataOut = dataOut(:, :, 1);
     end
 end
 
