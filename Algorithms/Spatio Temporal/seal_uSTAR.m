@@ -32,8 +32,9 @@ function [Source_Estimate, Parameters] = seal_uSTAR(Data, L, sourceSpaceInfo, va
 %                            if 'InitialTBFs' is not provided. Default: 4.
 %       'MaxIterations' (integer): Maximum iterations for the core STAR algorithm. Default: 50.
 %       'Tolerance' (double): Convergence tolerance for the cost function. Default: 1e-4.
-%       'RunAlgorithm' (string):Algorithm type, 'STAR'/'sSTARTS'. Default:'STAR'.
+%       'RunAlgorithm' (string): Algorithm type, 'STAR'/'sSTARTS'. Default:'STAR'.
 %       'PriorType' (string): Prior type, 'Laplacian'/'LAURA'. Default:'Laplacian'.
+%       'NumOrientations' (integer): Orientations per location (nd). Default: 1.
 %   Outputs:
 %       Source_Estimate (double matrix): Nsources x Ntimepoints estimated source activity.
 %       Parameters (struct): A struct containing detailed output:
@@ -65,6 +66,7 @@ addParameter(p, 'MaxIterations', 50, @(x) isscalar(x) && x > 0);
 addParameter(p, 'Tolerance', 1e-6, @(x) isscalar(x) && x > 0);
 addParameter(p, 'RunAlgorithm', 'STAR', @(x) isstring(x) || ischar(x));
 addParameter(p, 'PriorType', 'Laplacian', @(x) isstring(x) || ischar(x));
+addParameter(p, 'NumOrientations', 1, @isscalar);
 
 try
     parse(p, Data, L, sourceSpaceInfo, varargin{:});
@@ -77,6 +79,8 @@ Parameters.OptionsPassed = p.Results;
 RunAlgorithm = p.Results.RunAlgorithm;
 PriorType = p.Results.PriorType;
 MSmap = p.Results.MicrostateMaps;
+nd = p.Results.NumOrientations;
+
 if strcmpi(PriorType,'LAURA') 
     fprintf('Construct local regressive prior.\n');
     VertConn = sourceSpaceInfo.VertConn; VertLoc = sourceSpaceInfo.Vertices;
@@ -99,14 +103,20 @@ else
     M_prior = spdiags(sum(VertConn, 2), 0, size(VertConn,1), size(VertConn,2)) - 0.9 * VertConn;
 end
 
+% Expand the Spatial Prior to handle 3D multi-oriented dipoles
+if nd > 1
+    M_prior = kron(M_prior, speye(nd));
+end
+
 if isempty(MSmap)
     %% --- STAR Mode ---
     Parameters.AlgorithmMode = 'STAR';
-    fprintf('No microstate maps provided. Running in STAR mode.\n');
+    fprintf('No microstate maps provided. Running in STAR mode (nd=%d).\n', nd);
     [~,~,Dic] = svd(Data, 'econ');
     Phi = Dic(:, 1:min(p.Results.NumTBFs, size(Dic,2)))';
     opts = p.Results;
     opts.InitialTBFs = Phi;
+    
     % Call the core STAR algorithm
     if strcmpi(RunAlgorithm, 'sSTARTS')
         [Source_Estimate, star_params] = run_sSTARTS(L, Data, M_prior, opts);
@@ -117,13 +127,12 @@ if isempty(MSmap)
         
     Parameters.FinalW = star_params.W;
     Parameters.FinalPhi = star_params.Phi;
-    
     Parameters.CostHistory = star_params.cost;
     
 else
     %% --- u-STAR Mode ---
     Parameters.AlgorithmMode = 'u-STAR';
-    fprintf('Microstate maps provided. Running in u-STAR mode.\n');  
+    fprintf('Microstate maps provided. Running in u-STAR mode (nd=%d).\n', nd);  
     
     [~, nSamp] = size(Data);
     Source_Estimate = zeros(size(L, 2), nSamp);
@@ -171,7 +180,7 @@ end
 
 %% --- Core STAR Algorithm Implementation ---
 function [S, par] = run_STAR(L, B, M, opts)
-% This is the refactored implementation of STAR.m
+% Refactored implementation of STAR.m with Multi-Orientation (Group Sparsity) Support
 
 [nSensor, nSource] = size(L);
 nSamp = size(B, 2);
@@ -180,6 +189,7 @@ nSamp = size(B, 2);
 Phi = opts.InitialTBFs;
 maxIter = opts.MaxIterations;
 epsilon = opts.Tolerance;
+nd = opts.NumOrientations;
 
 if isempty(Phi)
     [~,~,tD] = svd(B, 'econ');
@@ -206,7 +216,7 @@ cost = 0;
 costlist = [];
 
 for iter = 1:maxIter
-    % Pruning steps (simplified for clarity)
+    % Pruning steps (Group Structure safely preserved due to grouped gammas)
     active_tbfs = 1./alpha > (max(1./alpha) * prune(2));
     if ~all(active_tbfs) && any(active_tbfs)
         Phi = Phi(active_tbfs, :);
@@ -243,26 +253,42 @@ for iter = 1:maxIter
     E_t = repmat(1./lambda, 1, nSensor) .* F.' / C_e * (B - L*W*Phi);
     E = M \ E_t;
     
-    % M-Step: Update Hyperparameters
+    % M-Step: Update Hyperparameters (with Group Sparsity Pooling)
     mu = zeros(nSource, 1);
     for k = 1:numW
         x = (Phi(k,:)*Phi(k,:).') + nSamp * C_phi(k,k);
         C_wk = FAF + C_noise / x;
         mu = mu + sum((F.'/C_wk).*F.', 2);
     end
-    gamma(active_dipole_indices) = sqrt(mu(active_dipole_indices) ./ sum(W_t(active_dipole_indices,:).^2, 2));
+    
+    % Pool variance calculations if Multi-Orientation
+    if nd > 1
+        mu_loc = sum(reshape(mu, nd, []), 1)';
+        W_pow_loc = sum(reshape(sum(W_t.^2, 2), nd, []), 1)';
+        gamma_update = repelem(sqrt(mu_loc ./ max(W_pow_loc, 1e-12)), nd);
+    else
+        gamma_update = sqrt(mu ./ max(sum(W_t.^2, 2), 1e-12));
+    end
+    gamma(active_dipole_indices) = gamma_update(active_dipole_indices);
     gamma(gamma > 1e16) = 1e16;
     
     alpha = nSamp ./ (diag(C_phi) + diag(Phi*Phi.'));
     
     beta_val = sum(F.'/C_e.*F.', 2);
-    lambda(active_dipole_indices) = sqrt(nSamp*beta_val(active_dipole_indices) ./ sum(E_t(active_dipole_indices,:).^2, 2));
+    if nd > 1
+        beta_loc = sum(reshape(beta_val, nd, []), 1)';
+        E_pow_loc = sum(reshape(sum(E_t.^2, 2), nd, []), 1)';
+        lambda_update = repelem(sqrt(nSamp * beta_loc ./ max(E_pow_loc, 1e-12)), nd);
+    else
+        lambda_update = sqrt(nSamp * beta_val ./ max(sum(E_t.^2, 2), 1e-12));
+    end
+    lambda(active_dipole_indices) = lambda_update(active_dipole_indices);
     lambda(lambda > min(lambda)*1e12) = min(lambda)*1e12;
     
     res = sum((B - L*W*Phi - L*E).^2, 2) + nSamp*diag(LW*C_phi*LW.');
     C_noise = diag(max(1e-6, res/nSamp));
     
-    % Cost Function (simplified for convergence check)
+    % Cost Function
     tempk = 0;
     temp = 0;
     FAF = F.*repmat(1./gamma',nSensor,1)* F.';
@@ -293,40 +319,39 @@ par.cost = costlist;
 end
 
 function [S, par] = run_sSTARTS(L, B, M, opts)
-% This is the implementation of sSTARTS
+% Implementation of sSTARTS with Multi-Orientation (Group Sparsity) Support
 
-% Initialize
 [nSensor, nSource] = size(L);
 nSamp = size(B, 2);
-% Initialize parameters from opts
 Phi = opts.InitialTBFs;
 maxIter = opts.MaxIterations;
 epsilon = opts.Tolerance;
-C_noise =eye(nSensor); % noise covariance
+nd = opts.NumOrientations;
+C_noise = eye(nSensor); % noise covariance
 
-if isfield(opts, 'LearnNoise')
-    if opts.LearnNoise == 1
-        LF = [L eye(nSensor)];
-        M = blkdiag(M,eye(nSensor));
-        F = LF/M;
-        naSource = nSource+nSensor;
-    end
-else
-    LF = L;
-    F = LF/M;
-    naSource = nSource;
-end
 
-numW = size(Phi,1); % number of TBFs
-W = ones(naSource,numW);
+LF = L;
+F = LF/M;
+
+
+numW = size(Phi,1); 
+W = ones(nSource,numW);
 W_t = W;
 C_phi = eye(numW)*1e-6;
 
-gamma = (ones(naSource,1)+1e-3*randn(naSource,1))*trace(F*F.')*trace(Phi*Phi.')/(trace(B*B'));
+% Group the initialization
+if nd > 1
+    rand_brain = repelem(randn(nSource/nd, 1), nd);
+    rand_init = rand_brain;
+    gamma = (ones(nSource,1) + 1e-3*rand_init) * trace(F*F.')*trace(Phi*Phi.')/(trace(B*B'));
+else
+    gamma = (ones(nSource,1) + 1e-3*randn(nSource,1)) * trace(F*F.')*trace(Phi*Phi.')/(trace(B*B'));
+end
+
 alpha = ones(numW,1);
 diagCk = zeros(numW,1);
 
-dipIdx = 1:naSource;
+dipIdx = 1:nSource;
 prune = [1e-6,1e-1];
 cost = -1;
 costlist = [];
@@ -347,34 +372,53 @@ for iter = 1:maxIter
     if ~prod(wIdx)
         dipIdx = dipIdx(wIdx);
     end
+    
     % spatial coefficient
     FAF = F.*repmat(1./gamma',nSensor,1)* F.';
     for k = 1:numW
         tIdx = setdiff(1:numW,k);
         x = ((Phi(k,:)*Phi(k,:).')+nSamp*C_phi(k,k));
         C_wk = FAF+C_noise/x;
-        r_k = B*Phi(k,:).'-LF*sum(W(:,tIdx).*repmat(Phi(k,:)*Phi(tIdx,:).'+nSamp*C_phi(k,tIdx),naSource,1),2);
+        r_k = B*Phi(k,:).'-LF*sum(W(:,tIdx).*repmat(Phi(k,:)*Phi(tIdx,:).'+nSamp*C_phi(k,tIdx),nSource,1),2);
         W_t(:,k) = repmat(1./gamma,1,nSensor).*F.'/C_wk*r_k/x;
-        diagCk(k) = trace(FAF/C_noise-FAF/C_wk*FAF/C_noise);% trace(L'L Cwk)
+        diagCk(k) = trace(FAF/C_noise-FAF/C_wk*FAF/C_noise);
     end
     W = M\W_t;
+    
     % Phi
     LW = LF*W;
     CR = LW.'/C_noise*LW;
     C_phi = inv(CR+diag(alpha+diagCk));
     Phi = C_phi*LW.'/C_noise*(B);
     
-    % gamma
-    mu = zeros(naSource,1);
+    % Gamma update (with Group Sparsity Pooling)
+    mu = zeros(nSource,1);
     for k = 1:numW
         x = (Phi(k,:)*Phi(k,:).')+nSamp*C_phi(k,k);
-        C_wk = FAF+C_noise/x; % re-calculate C_w{k}
+        C_wk = FAF+C_noise/x; 
         mu = mu+sum((F.'/C_wk).*F.',2);
     end
-    gamma(dipIdx) = sqrt(mu(dipIdx)./sum(W_t(dipIdx,:).^2,2));
+    
+    gamma_update = zeros(nSource, 1);
+    W_pow = sum(W_t.^2, 2);
+    
+    if nd > 1
+        % Group the brain dipoles
+        mu_brain = mu(1:nSource);
+        W_pow_brain = W_pow(1:nSource);
+        mu_loc = sum(reshape(mu_brain, nd, []), 1)';
+        W_pow_loc = sum(reshape(W_pow_brain, nd, []), 1)';
+        gamma_update(1:nSource) = repelem(sqrt(mu_loc ./ max(W_pow_loc, 1e-12)), nd);
+    else
+        gamma_update = sqrt(mu ./ max(W_pow, 1e-12));
+    end
+    
+    gamma(dipIdx) = gamma_update(dipIdx);
     gamma(gamma>1e12) = 1e12;
+    
     % alpha
     alpha = 1./(diag(C_phi)+diag(Phi*Phi')/nSamp);
+    
     % noise
     res = sum((B-LW*Phi).^2,2)+diag(LW*C_phi*LW'*nSamp);
     C_noise = diag(max(1e-6, res/nSamp));
@@ -396,11 +440,12 @@ for iter = 1:maxIter
     cost = -trace((B-LW*Phi)'/C_noise*(B-LW*Phi))-temp-tempk-nSamp*trace(CR*C_phi)...
         +nSamp*(sum(log(alpha))+log(det((C_phi))))-nSamp*chol_logdet((C_noise*2*pi));
     costlist = [costlist,cost];
+    
     if abs((cost-cost_old)/cost)<epsilon
         break;
     end
-    
 end
+
 par.W = W;
 par.Phi = Phi;
 par.dipIdx = dipIdx;
@@ -411,7 +456,7 @@ par.cost = costlist;
 S = W*Phi;
 end
 
-
+%% --- Helper Functions ---
 
 function S_out = fir_smooth(b, S_in)
 % A simple wrapper for zero-phase FIR filtering
@@ -434,7 +479,6 @@ mslabel = nan(T,N);
 for tr = 1:T
     mslabel(tr,:) = reject_segments(Data(:,:,tr), MSmap, options);
 end
-
 end
 
 function [logDet, err] = chol_logdet(A)
@@ -470,7 +514,6 @@ else
     polarity = 0;
 end
 
-
 %% Calculate the Global map dissimilarity for each Microstate
 % Normalise EEG and maps (average reference and gfp = 1 for EEG)
 X = (X - repmat(mean(X,1), C, 1)) ./ repmat(std(X,1), C, 1);
@@ -495,7 +538,6 @@ end
 % Sort the GMD to get the labels
 [~ ,labels] = sort(GMD,1);
 
-
 %% reject small maps
 for k = 1:minTime
     cruns = k;
@@ -508,7 +550,6 @@ for k = 1:minTime
     end
 end
 
-
 %% Export best labels only
 L = labels(1,:);
 end
@@ -518,7 +559,6 @@ function [d,c]=my_RLE(x)
 % This function performs Run Length Encoding to a strem of data x.
 % [d,c]=rl_enc(x) returns the element values in d and their number of
 % apperance in c. All number formats are accepted for the elements of x.
-% This function is built by Abdulrahman Ikram Siddiq in Oct-1st-2011 5:15pm.
 if nargin~=1
     error('A single 1-D stream must be used as an input')
 end

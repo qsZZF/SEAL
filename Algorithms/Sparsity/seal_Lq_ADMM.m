@@ -22,6 +22,16 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
 %       'NumOrientations' (integer): Orientations per location. Default: 1.
 %       'MaxIterations' (integer): Maximum ADMM iterations. Default: 500.
 %       'Tolerance' (double): Convergence tolerance. Default: 1e-5.
+%       'Verbose' (logical): Print progress info. Default: true.
+%
+%   Outputs:
+%       Source_Lq (double matrix): Nsources x Ntimepoints estimated source activity.
+%       Param_Lq (struct):
+%           .BasisCoefficients (double matrix): Source coefficients in TBF space.
+%           .ConvergedAt (integer): Iteration at which convergence occurred
+%                                   (= MaxIterations if did not converge).
+%           .Converged (logical): True if convergence criteria were met.
+%           .OptionsPassed (struct): Struct of all parsed input options.
 
     %% 1. Input Parsing
     p = inputParser;
@@ -38,29 +48,47 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
     addParameter(p, 'NumOrientations', 1, @isscalar);
     addParameter(p, 'MaxIterations', 500, @isscalar);
     addParameter(p, 'Tolerance', 1e-5, @isscalar);
+    addParameter(p, 'Verbose', true, @(x) islogical(x) || isnumeric(x));
 
     parse(p, Data, L, varargin{:});
     opts = p.Results;
 
-    fidelity = upper(opts.DataFidelity);
+    fidelity = upper(char(opts.DataFidelity));
     q = opts.q_norm;
     lamda = opts.RegularizationParameter;
     nd = opts.NumOrientations;
     Phi = opts.Phi;
     MAX_ITER = opts.MaxIterations;
     TOL = opts.Tolerance;
+    verbose = logical(opts.Verbose);
     
     [Nchannels, Ntimepoints] = size(Data);  
 
     nSources_total = size(L, 2);
+    if mod(nSources_total, nd) ~= 0
+        error('seal_Lq_ADMM:NumOrientationsMismatch', ...
+              'Total sources in L is not divisible by NumOrientations.');
+    end
     nSources_loc = nSources_total / nd;
+
+    % Validate fidelity early so users get a clear message
+    if ~strcmp(fidelity, 'L2') && ~strcmp(fidelity, 'L1')
+        error('seal_Lq_ADMM:UnknownFidelity', ...
+              'DataFidelity must be ''L2'' or ''L1'', got: %s', fidelity);
+    end
+
+    % Initialize convergence tracking (so fields always exist)
+    Param_Lq.ConvergedAt = MAX_ITER;
+    Param_Lq.Converged   = false;
 
     %% 3. Temporal Basis Projection (TBF)
     if ~isempty(Phi)
         % Project Data: Y_tilde = Y * pinv(Phi)
         Y_tilde = Data * pinv(Phi);
         K_dim = size(Phi, 1);
-        fprintf('Projected data onto %d Temporal Basis Functions.\n', K_dim);
+        if verbose
+            fprintf('Projected data onto %d Temporal Basis Functions.\n', K_dim);
+        end
     else
         % Use raw time points
         Y_tilde = Data;
@@ -71,10 +99,25 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
     if strcmp(fidelity, 'L2')
         if isempty(opts.ADMM_Rho), rho = 1; else, rho = opts.ADMM_Rho; end
         
-        fprintf('Running Spatio-Temporal L2,q-L2 ADMM (q=%g, lambda=%g, nd=%d, K=%d)...\n', q, lamda, nd, K_dim);
+        if verbose
+            fprintf('Running Spatio-Temporal L2,q-L2 ADMM (q=%g, lambda=%g, nd=%d, K=%d)...\n', ...
+                    q, lamda, nd, K_dim);
+        end
         
-        % Woodbury Identity Optimization (Channel Space Inversion)
-        inv_core = inv((rho/2) * eye(Nchannels) + L * L');
+        % Woodbury Identity Optimization (Channel Space Inversion).
+        % Use Cholesky-based factorization instead of explicit inv() for
+        % numerical stability and speed.
+        M = (rho/2) * eye(Nchannels) + L * L';
+        M = (M + M')/2;
+        [R_chol, chol_flag] = chol(M);
+        use_chol = (chol_flag == 0);
+        if ~use_chol
+            % Fall back to a robust solve if M is not numerically SPD
+            if verbose
+                warning('seal_Lq_ADMM:CholFallback', ...
+                        'Cholesky failed on Woodbury core; falling back to mldivide.');
+            end
+        end
         
         % Initialize Matrix States (No time loop needed)
         Lty = L' * Y_tilde;
@@ -86,8 +129,15 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
             Zm1 = Z;
             
             % X-update (Woodbury Direct Solve on all bases simultaneously)
-            RHS = 2 * Lty + rho * (Z - U);
-            X = (1/rho) * RHS - (1/rho) * L' * (inv_core * (L * RHS));
+            %   X = (1/rho)*RHS - (1/rho)*L' * M^{-1} * (L * RHS)
+            RHS  = 2 * Lty + rho * (Z - U);
+            LRHS = L * RHS;
+            if use_chol
+                M_inv_LRHS = R_chol \ (R_chol' \ LRHS);
+            else
+                M_inv_LRHS = M \ LRHS;
+            end
+            X = (1/rho) * RHS - (1/rho) * (L' * M_inv_LRHS);
             
             % Z-update (Spatio-Temporal L2,q Group Shrinkage)
             Z = spatio_temporal_shrinkage(X + U, q, lamda, rho, nd, nSources_loc, K_dim);
@@ -95,10 +145,16 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
             % U-update (Dual ascent)
             U = U + (X - Z);
             
-            % Convergence Check
-            if (norm(rho * (Z - Zm1), 'fro') < sqrt(nSources_total * K_dim) * TOL) && ...
-               (norm(X - Z, 'fro') < sqrt(nSources_total * K_dim) * TOL)
+            % Convergence Check (Boyd-style: absolute + relative tolerances)
+            r_norm = norm(X - Z, 'fro');                        % primal residual
+            s_norm = norm(rho * (Z - Zm1), 'fro');              % dual residual
+            abs_tol  = TOL * sqrt(nSources_total * K_dim);
+            eps_pri  = abs_tol + TOL * max([norm(X,'fro'), norm(Z,'fro'), eps]);
+            eps_dual = abs_tol + TOL * norm(rho * U, 'fro');
+            
+            if (r_norm < eps_pri) && (s_norm < eps_dual)
                 Param_Lq.ConvergedAt = iter;
+                Param_Lq.Converged   = true;
                 break;
             end
         end
@@ -108,14 +164,17 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
     elseif strcmp(fidelity, 'L1')
         if isempty(opts.ADMM_Rho), rho = 100; else, rho = opts.ADMM_Rho; end
         
-        fprintf('Running Spatio-Temporal L2,q-L1 ADMM (q=%g, lambda=%g, nd=%d, K=%d)...\n', q, lamda, nd, K_dim);
+        if verbose
+            fprintf('Running Spatio-Temporal L2,q-L1 ADMM (q=%g, lambda=%g, nd=%d, K=%d)...\n', ...
+                    q, lamda, nd, K_dim);
+        end
         
-        % Spectral Normalization
-        scale_factor = 1.01 * norm(L, 2);
+        % Spectral Normalization (use svds for speed on large L)
+        scale_factor = 1.01 * svds(L, 1);
         Ls = L / scale_factor;
         Ys = Y_tilde / scale_factor;
         
-        ep = 1e-3;
+        ep   = 1e-3;
         tao1 = 0.99; 
         tao2 = 2 * ep;
         rho_cov = 3.2 / ep / lamda;
@@ -127,6 +186,7 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
         current_rho = rho;
         
         for iter = 1:MAX_ITER
+            % Continuation strategy: gradually increase rho for q < 1
             if (current_rho < rho_cov && q < 1)
                 current_rho = current_rho * 1.01;
             end
@@ -136,7 +196,7 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
             grad_Z = X - tao1 * (Ls' * (Ls * X - Ys - V - W_dual / current_rho));
             X = spatio_temporal_shrinkage(grad_Z, q, tao1, current_rho, nd, nSources_loc, K_dim);
             
-            % V-step (Huber-like smoothing)
+            % V-step (Huber-like smoothing for L1 fidelity)
             d2 = V ./ sqrt(V.^2 + ep^2);
             V = 1 / (1/tao2 + current_rho * lamda) * ...
                 (1/tao2 * V - d2 + current_rho * lamda * (Ls * X - Ys - W_dual / current_rho));
@@ -145,14 +205,30 @@ function [Source_Lq, Param_Lq] = seal_Lq_ADMM(Data, L, varargin)
             LsX = Ls * X;
             W_dual = W_dual - current_rho * (LsX - Ys - V);
             
-            % Convergence Check
-            if (norm(X - Xm1, 'fro') < sqrt(nSources_total * K_dim) * TOL) && ...
-               (norm(LsX - Ys - V, 'fro') < sqrt(Nchannels * K_dim) * TOL)
+            % Convergence Check (Boyd-style: absolute + relative tolerances)
+            r_norm = norm(LsX - Ys - V, 'fro');                 % primal residual
+            s_norm = norm(X - Xm1, 'fro');                      % step size proxy
+            abs_tol_x = TOL * sqrt(nSources_total * K_dim);
+            abs_tol_y = TOL * sqrt(Nchannels * K_dim);
+            eps_pri  = abs_tol_y + TOL * max([norm(LsX,'fro'), norm(Ys,'fro'), norm(V,'fro'), eps]);
+            eps_step = abs_tol_x + TOL * max(norm(X,'fro'), eps);
+            
+            if (s_norm < eps_step) && (r_norm < eps_pri)
                 Param_Lq.ConvergedAt = iter;
+                Param_Lq.Converged   = true;
                 break;
             end
         end
         W_est = X;
+    end
+
+    if verbose
+        if Param_Lq.Converged
+            fprintf('  Converged at iteration %d / %d.\n', Param_Lq.ConvergedAt, MAX_ITER);
+        else
+            fprintf('  Reached MaxIterations = %d without meeting tolerance %.1e.\n', ...
+                    MAX_ITER, TOL);
+        end
     end
 
     %% 6. Final State Assembly
@@ -205,17 +281,20 @@ function [x] = scalar_shrinkage_Lq(b, q, lam, rho_penalty)
         ABSTOL   = 1e-4;
         x    = zeros(length(b), 1);
         
+        % Critical threshold below which prox is exactly 0
         beta = (rho_penalty / (lam * q * (1 - q)))^(1 / (q - 2));
         f1   = lam * q * beta^(q - 1) + rho_penalty * beta - rho_penalty * abs(b);
         i0   = find(f1 < 0);
         
         if ~isempty(i0) 
             b_u = abs(b(i0));
-            x_u = b_u;
+            x_u = b_u;                                    % Newton init
             for i = 1:max_iter              
-                deta_x = (lam * q * x_u.^(q-1) + rho_penalty * x_u - rho_penalty * b_u) ./ ...
-                         (lam * q * (q-1) * x_u.^(q-2) + rho_penalty);
+                denom = lam * q * (q-1) * x_u.^(q-2) + rho_penalty;
+                deta_x = (lam * q * x_u.^(q-1) + rho_penalty * x_u - rho_penalty * b_u) ./ denom;
                 x_u = x_u - deta_x;
+                % Guard against negatives produced by Newton overshoot
+                x_u = max(x_u, eps);
                 if (norm(deta_x) < sqrt(length(x_u)) * ABSTOL)
                     break;
                 end
@@ -224,7 +303,7 @@ function [x] = scalar_shrinkage_Lq(b, q, lam, rho_penalty)
             
             % Check objective value to ensure global minimum
             obj_zero = rho_penalty/2 * b_u.^2;
-            obj_val = lam * abs(x_u).^q + rho_penalty/2 * (x_u - b(i0)).^2;
+            obj_val  = lam * abs(x_u).^q + rho_penalty/2 * (x_u - b(i0)).^2;
             
             i1 = find(obj_zero - obj_val < 0);
             x_u(i1) = 0;
@@ -234,6 +313,6 @@ function [x] = scalar_shrinkage_Lq(b, q, lam, rho_penalty)
     elseif (q == 1) % L1 Soft Thresholding
         x = sign(b) .* max(abs(b) - lam / rho_penalty, 0);
     else
-        error('q must be between 0 and 1');
+        error('seal_Lq_ADMM:InvalidQ', 'q must be between 0 and 1.');
     end
 end

@@ -20,35 +20,39 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
 %       'WeightsMin' (scalar): Default: 0.0.
 %       'SolverMaxIter' (integer): Max iterations for inner BCD solver. Default: 1000.
 %       'SolverTolerance' (double): Convergence tolerance for inner BCD. Default: 1e-4.
-%       'IRMXNETolerance' (double): Tolerance for convergence of X between reweighting iterations. Default: 1e-4.
+%       'IRMXNETolerance' (double): Tolerance for outer X change. Default: 1e-4.
+%       'IRMXNEMinIter' (integer): Minimum outer iterations before convergence check. Default: 2.
 %       'Debias' (logical): Perform amplitude debiasing after iterations. Default: true.
 %       'DebiasMaxIter' (integer): Default: 1000.
 %       'DebiasTolerance' (double): Default: 1e-7.
 %       'PCAWhitening' (logical/integer): Default: true.
 %       'RankNoiseCov' (integer/[]): Default: [].
 %       'PickOri' (char/string): 'none' or 'vector'. Default: 'none'.
+%       'Verbose' (logical): Print progress info. Default: true.
 %
 %   Outputs:
 %       Source_irMxNE (double matrix): Estimated source activity.
-%       Param_irMxNE (struct): Parameters and intermediate results.
-%
-%   Copyright 2025 Your Name/Institution
+%       Param_irMxNE (struct): Parameters and intermediate results, including:
+%           .Converged (logical): True if outer loop met IRMXNETolerance.
+%           .NumIRMXNEIterActual (integer): Number of outer iterations executed.
+%           .E_path_per_iter (cell): Inner BCD primal-objective paths per outer iter.
 
     %% Input Parsing
     p = inputParser;
     p.CaseSensitive = false;
-    p.KeepUnmatched = false; % For simplicity, not passing unmatched to BCD for now
+    p.KeepUnmatched = false;
 
     defaultAlpha = 50.0;
-    defaultNumIRMXNEIter = 5; % For irMxNE, typically > 1
+    defaultNumIRMXNEIter = 5;
     if size(L,1) > 0, defaultNoiseCov = eye(size(L,1)); else, defaultNoiseCov = []; end
     defaultNumOrientations = 1;
     defaultDepthBiasComp = struct('exponent', 0.5, 'limit', 10.0); 
     defaultWeights = [];
     defaultWeightsMin = 0.0;
-    defaultSolverMaxIter = 1000; % Max iter for inner BCD loop
-    defaultSolverTol = 1e-4;     % Tol for inner BCD loop
-    defaultIRMXNETol = 1e-4;     % Tol for outer reweighting loop X change
+    defaultSolverMaxIter = 1000;
+    defaultSolverTol = 1e-4;
+    defaultIRMXNETol = 1e-4;
+    defaultIRMXNEMinIter = 2;
     defaultDebias = true;
     defaultDebiasMaxIter = 1000;
     defaultDebiasTol = 1e-7;
@@ -69,12 +73,14 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
     addParameter(p, 'SolverMaxIter', defaultSolverMaxIter, @(x) isnumeric(x) && isscalar(x) && x>0);
     addParameter(p, 'SolverTolerance', defaultSolverTol, @(x) isnumeric(x) && isscalar(x) && x>0);
     addParameter(p, 'IRMXNETolerance', defaultIRMXNETol, @(x) isnumeric(x) && isscalar(x) && x>0);
+    addParameter(p, 'IRMXNEMinIter', defaultIRMXNEMinIter, @(x) isnumeric(x) && isscalar(x) && x>=1);
     addParameter(p, 'Debias', defaultDebias, @islogical);
     addParameter(p, 'DebiasMaxIter', defaultDebiasMaxIter, @(x) isnumeric(x) && isscalar(x) && x>0);
     addParameter(p, 'DebiasTolerance', defaultDebiasTol, @(x) isnumeric(x) && isscalar(x) && x>0);
     addParameter(p, 'PCAWhitening', defaultPCAWhitening);
     addParameter(p, 'RankNoiseCov', defaultRankNoiseCov, @(x) (isnumeric(x) && isscalar(x) && x>0) || isempty(x));
     addParameter(p, 'PickOri', defaultPickOri, @(x) ischar(x) || isstring(x));
+    addParameter(p, 'Verbose', true, @(x) islogical(x) || isnumeric(x));
 
     parse(p, Data, L, varargin{:});
     Param_irMxNE.OptionsPassed = p.Results;
@@ -87,21 +93,29 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
     solver_tol = p.Results.SolverTolerance; perform_debias = p.Results.Debias;
     debias_max_iter = p.Results.DebiasMaxIter; debias_tol = p.Results.DebiasTolerance;
     pca_whitening_opt = p.Results.PCAWhitening; rank_noise_cov_opt = p.Results.RankNoiseCov;
-    pick_ori_opt = lower(p.Results.PickOri);
+    pick_ori_opt = lower(char(p.Results.PickOri));
     n_irmxne_iter = p.Results.NumIRMXNEIter;
     irmxne_tol = p.Results.IRMXNETolerance;
+    irmxne_min_iter = p.Results.IRMXNEMinIter;
+    verbose = logical(p.Results.Verbose);
     local_check_option(pick_ori_opt, {'none', 'vector'});
 
-
     [Nchan, Nt] = size(Y_orig); [Nchan_L, Nsources_total] = size(G_orig);
+    if mod(Nsources_total, nd) ~= 0, error('seal_irMxNE:NDMismatch', 'L Nsources not divisible by NumOrientations.'); end
     S_loc = Nsources_total / nd;
 
     if isempty(C_noise), C_noise = eye(Nchan); Param_irMxNE.OptionsPassed.NoiseCovariance = C_noise; end
-    if Nchan ~= Nchan_L, error('Data and L channel mismatch.'); end
-    if mod(Nsources_total, nd) ~= 0, error('L Nsources not divisible by NumOrientations.'); end
+    if Nchan ~= Nchan_L, error('seal_irMxNE:ChannelMismatch', 'Data and L channel mismatch.'); end
+
+    % Constants
+    ALPHA_MAX_SCALE = 0.01;        % MNE-Python convention
+
+    % Initialize tracking
+    Param_irMxNE.Converged           = false;
+    Param_irMxNE.NumIRMXNEIterActual = 0;
+    Param_irMxNE.E_path_per_iter     = {};
 
     %% 1. Prepare Gain Matrix (Whitening, PCA, Depth Comp, External Weights)
-    % This part is identical to seal_MxNE and can be a shared helper function eventually
     iW = eye(Nchan); Y_w = Y_orig; G_w = G_orig; rank_whitener = Nchan;
     if ~isequal(C_noise, eye(Nchan))
         try
@@ -109,12 +123,16 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
             [s_c_vec_sorted, sort_idx_c] = sort(s_c_vec, 'descend'); U_c_sorted = U_c(:, sort_idx_c);
             rank_eff = sum(s_c_vec_sorted > (Nchan * eps(max(s_c_vec_sorted))));
             rank_whitener = min(rank_eff, Nchan);
-            if ~isempty(rank_noise_cov_opt) && ~islogical(rank_noise_cov_opt), rank_whitener = min(rank_noise_cov_opt, rank_whitener); end
+            if ~isempty(rank_noise_cov_opt) && ~islogical(rank_noise_cov_opt)
+                rank_whitener = min(rank_noise_cov_opt, rank_whitener); 
+            end
             s_inv_sqrt = zeros(Nchan,1); valid_s_idx = 1:rank_whitener;
             s_inv_sqrt(valid_s_idx) = 1 ./ sqrt(s_c_vec_sorted(valid_s_idx));
             iW_dense = diag(s_inv_sqrt) * U_c_sorted'; iW = iW_dense(1:rank_whitener, :);
             Y_w = iW * Y_orig; G_w = iW * G_orig;
-        catch ME_white, warning('seal_irMxNE:WhiteningFailed', 'Whitening: %s. Using unwhitened.', ME_white.message); iW=eye(Nchan); Y_w=Y_orig; G_w=G_orig; rank_whitener=Nchan; 
+        catch ME_white
+            warning('seal_irMxNE:WhiteningFailed', 'Whitening: %s. Using unwhitened.', ME_white.message);
+            iW=eye(Nchan); Y_w=Y_orig; G_w=G_orig; rank_whitener=Nchan; 
         end
     end
     Param_irMxNE.WhiteningMatrix = iW;
@@ -124,14 +142,14 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
         pca_rank = rank_whitener;
         if isnumeric(pca_whitening_opt) && ~islogical(pca_whitening_opt), pca_rank = min(pca_whitening_opt, rank_whitener); end
         if pca_rank < size(M_processed,1)
-            fprintf('irMxNE: Applying PCA to whitened data, reducing to rank %d\n', pca_rank);
+            if verbose, fprintf('irMxNE: Applying PCA to whitened data, reducing to rank %d\n', pca_rank); end
             [U_data, S_data_mat, V_data] = svd(M_processed, 'econ');
             M_processed = U_data(:, 1:pca_rank) * S_data_mat(1:pca_rank, 1:pca_rank);
             Vh_pca = V_data(:, 1:pca_rank)';
         end
     end
 
-    source_weighting_init = ones(Nsources_total, 1); % Initial combined weights for G
+    source_weighting_init = ones(Nsources_total, 1);
     if ~isempty(depth_params) && isfield(depth_params, 'exponent')
         source_norms = zeros(S_loc, 1);
         for i = 1:S_loc, idx = (i-1)*nd + (1:nd); source_norms(i) = norm(G_w(:, idx), 'fro'); end
@@ -150,7 +168,8 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
         if ~isempty(uw) && length(uw) == S_loc
             if max(uw) > eps, uw = uw / max(uw); end
             if nd == 1, source_weighting_init = source_weighting_init .* uw; else, source_weighting_init = source_weighting_init .* repelem(uw, nd); end
-        else, warning('seal_irMxNE:UserWeightsDim', 'User weights ignored.'); 
+        else
+            warning('seal_irMxNE:UserWeightsDim', 'User weights ignored.'); 
         end
     end
     Param_irMxNE.InitialSourceWeightingForGain = source_weighting_init;
@@ -158,111 +177,133 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
 
     mask_active_sources = true(Nsources_total, 1);
     if user_weights_min > 0 && ~isempty(user_weights_input) 
-        mask_active_sources = source_weighting_init > (user_weights_min * (max(source_weighting_init)+eps) );
+        mask_active_sources = source_weighting_init > (user_weights_min * (max(source_weighting_init)+eps));
         if ~any(mask_active_sources), error('seal_irMxNE:NoSourcesAfterWeightMin', 'No sources after WeightsMin.'); end
         G_eff_base = G_eff_base(:, mask_active_sources);
-        source_weighting_init_masked = source_weighting_init(mask_active_sources); % Keep track of these for reapplication
-        fprintf('irMxNE: Reduced source space to %d component(s) due to WeightsMin.\n', sum(mask_active_sources));
+        source_weighting_init_masked = source_weighting_init(mask_active_sources);
+        if verbose
+            fprintf('irMxNE: Reduced source space to %d component(s) due to WeightsMin.\n', sum(mask_active_sources));
+        end
     else
         source_weighting_init_masked = source_weighting_init;
     end
+    if mod(size(G_eff_base, 2), nd) ~= 0
+        error('seal_irMxNE:MaskBlockMismatch', ...
+              'Active source mask does not respect orientation-block structure.');
+    end
     Param_irMxNE.ActiveSourceMask_Initial = mask_active_sources;
     
-    %% 2. Scaling for Solver (based on initial G_eff_base)
+    %% 2. Scaling for Solver
     GtM = G_eff_base' * M_processed;
     n_pos_eff = size(GtM,1)/nd;
     l2inf_norms_sq_per_group = zeros(n_pos_eff, 1);
-    for i = 1:n_pos_eff, idx = (i-1)*nd + (1:nd); l2inf_norms_sq_per_group(i) = sum(GtM(idx,:).^2, 'all'); end
-    alpha_max_val = sqrt(max(l2inf_norms_sq_per_group));
-    alpha_max_val = alpha_max_val * 0.01; 
+    for i = 1:n_pos_eff
+        idx = (i-1)*nd + (1:nd);
+        l2inf_norms_sq_per_group(i) = sum(GtM(idx,:).^2, 'all');
+    end
+    alpha_max_val = sqrt(max(l2inf_norms_sq_per_group)) * ALPHA_MAX_SCALE;
     if alpha_max_val < eps, alpha_max_val = 1.0; end
 
-    G_solver = G_eff_base / alpha_max_val; % This G is used in the reweighting loop
+    G_solver = G_eff_base / alpha_max_val;
     alpha_solver = alpha_user; 
     Param_irMxNE.AlphaSolver = alpha_solver; 
     Param_irMxNE.AlphaMaxScalingFactor = alpha_max_val;
 
     %% 3. Iterative Reweighted MxNE Solver
-    fprintf('irMxNE: Starting iterative reweighted L1/L2 solution (%d iterations)...\n', n_irmxne_iter);
+    if verbose
+        fprintf('irMxNE: Starting iterative reweighted L1/L2 solution (max %d outer iterations)...\n', n_irmxne_iter);
+    end
     
-    X_active_iter_pca = zeros(size(G_solver,2), size(M_processed,2)); % Initialize X for active sources
-    current_reweighting_weights = ones(size(G_solver,2), 1); % Initial reweights are 1 (w_k in MNE-Python)
-    active_set_bcd = false(size(G_solver,2),1); % Active set from BCD
+    X_active_iter_pca = zeros(size(G_solver,2), size(M_processed,2));
+    current_reweighting_weights = ones(size(G_solver,2), 1);
+    active_set_bcd = false(size(G_solver,2),1);
+    last_outer_iter = 0;
 
     for k_iter = 1:n_irmxne_iter
-        fprintf('  irMxNE Iteration %d/%d...\n', k_iter, n_irmxne_iter);
-        X_prev_iter_pca = X_active_iter_pca; % Store for convergence check
+        last_outer_iter = k_iter;
+        if verbose, fprintf('  irMxNE Iteration %d/%d...\n', k_iter, n_irmxne_iter); end
+        X_prev_iter_pca = X_active_iter_pca;
         
-        % Apply current reweighting weights to G_scaled_base
-        % G_iter = G_scaled_base * diag(current_reweighting_weights)
-        % (MNE-Python: G_tmp = G[:, active_set] * weights[np.newaxis, :])
-        % Here, weights are applied to columns of G.
+        % Apply current reweighting to columns of G
         G_iter_solver = bsxfun(@times, G_solver, current_reweighting_weights');
 
-        [X_solved_at_iter, active_set_at_iter_mask, ~] = local_mxne_bcd_solver(...
-            M_processed, G_iter_solver, alpha_solver, nd, ...
-            solver_max_iter, solver_tol, max(1,round(solver_max_iter/10)));
+        [X_solved_at_iter, active_set_at_iter_mask, E_path_bcd, ~, ~] = ...
+            local_mxne_bcd_solver(M_processed, G_iter_solver, alpha_solver, nd, ...
+                solver_max_iter, solver_tol, max(1,round(solver_max_iter/10)), verbose);
+        Param_irMxNE.E_path_per_iter{k_iter} = E_path_bcd;
         
-        % Update X_active_iter_pca: solution from BCD is for the reweighted problem.
-        % X_solved_at_iter is for G_iter_solver.
-        % The "true" X for this iteration is X_solved_at_iter .* current_reweighting_weights(active_set_at_iter_mask)
+        % Recover the "true" X under the original (unreweighted) variable
+        % via the substitution X = diag(w) * X_solved.
         X_active_iter_pca_new = zeros(size(G_solver,2), size(M_processed,2));
         if any(active_set_at_iter_mask)
-            X_active_iter_pca_new(active_set_at_iter_mask,:) = bsxfun(@times, X_solved_at_iter, current_reweighting_weights(active_set_at_iter_mask));
+            X_active_iter_pca_new(active_set_at_iter_mask,:) = ...
+                bsxfun(@times, X_solved_at_iter, current_reweighting_weights(active_set_at_iter_mask));
         end
         X_active_iter_pca = X_active_iter_pca_new;
-        active_set_bcd = active_set_at_iter_mask; % Update active set from BCD
+        active_set_bcd = active_set_at_iter_mask;
 
-        if k_iter < n_irmxne_iter % Don't update weights on the last iteration
+        if k_iter < n_irmxne_iter
             if ~any(active_set_bcd)
-                fprintf('    No active sources in irMxNE iteration %d. Stopping reweighting.\n', k_iter);
+                if verbose
+                    fprintf('    No active sources in irMxNE iteration %d. Stopping reweighting.\n', k_iter);
+                end
+                Param_irMxNE.Converged = true;   % counts as "settled"
                 break; 
             end
-            % Update reweighting_weights for next iteration based on current X_active_iter_pca
             
-            X_for_gprime = X_active_iter_pca(active_set_bcd,:); % Use only active X for gprime
-            if isempty(X_for_gprime)
-                 new_reweights_loc = ones(sum(active_set_bcd),1); % Should not happen if break above
+            % Update reweighting based on group L2 norms of current X.
+            % This implements the L0.5 majorization-minimization update:
+            %   w_g^{new} = 2 * ||X_g||_F^{1/2}
+            X_for_gprime = X_active_iter_pca(active_set_bcd, :);
+            n_active_pos = size(X_for_gprime, 1) / nd;
+            group_L2_norms_sq = local_groups_norm2(X_for_gprime, nd, n_active_pos);
+            g_X = sqrt(sqrt(group_L2_norms_sq));         % = ||X_g||_F^{1/2}
+            new_reweights_loc = 2.0 * g_X;
+            
+            temp_current_reweighting_weights = ones(size(G_solver,2), 1);
+            if nd > 1
+                temp_current_reweighting_weights(active_set_bcd) = repelem(new_reweights_loc, nd);
             else
-                group_L2_norms_sq = local_groups_norm2(X_for_gprime, nd, size(X_for_gprime,1)/nd); % N_active_pos x 1
-                g_X = sqrt(sqrt(group_L2_norms_sq)); % N_active_pos x 1
-                new_reweights_loc = 2.0 * g_X; % N_active_pos x 1
-                
-                % Expand to components
-                temp_current_reweighting_weights = ones(size(G_solver,2), 1);
-                if nd > 1
-                    temp_current_reweighting_weights(active_set_bcd) = repelem(new_reweights_loc, nd);
-                else
-                    temp_current_reweighting_weights(active_set_bcd) = new_reweights_loc;
-                end
-                
-                current_reweighting_weights = temp_current_reweighting_weights;
+                temp_current_reweighting_weights(active_set_bcd) = new_reweights_loc;
             end
+            current_reweighting_weights = temp_current_reweighting_weights;
         end
         
-        % Check convergence of X across outer iterations
-        if k_iter > 1
-            change_X = norm(X_active_iter_pca(:) - X_prev_iter_pca(:),'fro') / (norm(X_prev_iter_pca(:),'fro') + eps);
-            fprintf('    irMxNE Iter %d: X change = %.2e (Tol=%.1e)\n', k_iter, change_X, irmxne_tol);
+        % Outer convergence check (only after IRMXNEMinIter)
+        if k_iter >= max(2, irmxne_min_iter)
+            change_X = norm(X_active_iter_pca(:) - X_prev_iter_pca(:),'fro') / ...
+                       (norm(X_prev_iter_pca(:),'fro') + eps);
+            if verbose
+                fprintf('    irMxNE Iter %d: X change = %.2e (Tol=%.1e)\n', k_iter, change_X, irmxne_tol);
+            end
             if change_X < irmxne_tol
-                fprintf('  irMxNE converged (X change) at iteration %d.\n', k_iter);
+                if verbose
+                    fprintf('  irMxNE converged (X change) at iteration %d.\n', k_iter);
+                end
+                Param_irMxNE.Converged = true;
                 break;
             end
         end
-    end % End irMxNE iterations
-    if k_iter == n_irmxne_iter, warning('seal_irMxNE:OuterLoopMaxIter', 'irMxNE reweighting loop reached max iterations.'); end
-    Param_irMxNE.NumIRMXNEIterActual = k_iter;
+    end
     
-    X_solved_active_pca = X_active_iter_pca(active_set_bcd,:); % Final solution from BCD on active set
+    if ~Param_irMxNE.Converged && last_outer_iter == n_irmxne_iter && n_irmxne_iter > 1
+        % Only warn if we genuinely ran out of iterations without converging
+        warning('seal_irMxNE:OuterLoopMaxIter', ...
+                'irMxNE outer loop reached max iterations (%d) without meeting tol %.1e.', ...
+                n_irmxne_iter, irmxne_tol);
+    end
+    Param_irMxNE.NumIRMXNEIterActual = last_outer_iter;
+    
+    X_solved_active_pca = X_active_iter_pca(active_set_bcd,:);
     final_active_set_mask_in_G_solver_space = active_set_bcd;
 
     %% 4. Debias (if requested)
     X_debiased_active_pca = X_solved_active_pca;
     if perform_debias && sum(final_active_set_mask_in_G_solver_space) > 0
-        fprintf('irMxNE: Performing debiasing...\n');
+        if verbose, fprintf('irMxNE: Performing debiasing...\n'); end
         G_for_debias = G_solver(:, final_active_set_mask_in_G_solver_space);
         debiasing_weights = local_compute_bias(M_processed, G_for_debias, X_solved_active_pca, nd, ...
-                                               debias_max_iter, debias_tol);
+                                               debias_max_iter, debias_tol, verbose);
         X_debiased_active_pca = X_solved_active_pca .* debiasing_weights;
         Param_irMxNE.DebiasingWeights = debiasing_weights;
     end
@@ -274,7 +315,6 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
     end
 
     %% 6. Reapply scaling and original source weighting
-    
     active_indices_in_masked_space = find(final_active_set_mask_in_G_solver_space);
     sw_init_for_final_active = source_weighting_init_masked(active_indices_in_masked_space);
 
@@ -283,8 +323,7 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
 
     %% 7. Format Output STC
     X_full_components = zeros(Nsources_total, Nt);
-    temp_full_masked = zeros(sum(mask_active_sources), Nt); % Size of G_eff_base columns
-
+    temp_full_masked = zeros(sum(mask_active_sources), Nt);
     temp_full_masked(final_active_set_mask_in_G_solver_space, :) = X_final_active;
     X_full_components(mask_active_sources, :) = temp_full_masked;
 
@@ -313,8 +352,8 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
 end
 
 
-function [X_solved_active, active_set_mask, E_path] = local_mxne_bcd_solver(...
-    M_data, G_solver, alpha_penalty_val, O_orient, max_iter, tol, dgap_freq)
+function [X_solved_active, active_set_mask, E_path, converged, last_iter] = local_mxne_bcd_solver(...
+    M_data, G_solver, alpha_penalty_val, O_orient, max_iter, tol, dgap_freq, verbose)
 % Solves L1/L2 MxNE using Block Coordinate Descent.
 
     [~, Nt_proc] = size(M_data);
@@ -323,12 +362,13 @@ function [X_solved_active, active_set_mask, E_path] = local_mxne_bcd_solver(...
 
     X = zeros(Ns_proc, Nt_proc);
     R = M_data;
-    active_set_mask = false(Ns_proc, 1);
 
-    E_path = [];
-    highest_d_obj = -Inf;
+    E_path = nan(ceil(max_iter / dgap_freq) + 2, 1);
+    n_E = 0;
+    converged = false;
+    last_iter = max_iter;
 
-    % Calculate Lipschitz constants (lc) for each source position block
+    % Lipschitz constants. Use eig() on small SPD matrix (faster than SVD).
     lc = zeros(N_pos_proc, 1);
     if O_orient == 1
         lc = sum(G_solver.^2, 1)';
@@ -336,16 +376,21 @@ function [X_solved_active, active_set_mask, E_path] = local_mxne_bcd_solver(...
         for j_pos = 1:N_pos_proc
             idx = (j_pos-1)*O_orient + (1:O_orient);
             G_j_block = G_solver(:, idx);
-            lc(j_pos) = norm(G_j_block' * G_j_block, 2);
-%             lc(j_pos) = norm(G_solver(:, idx), 'fro')^2;
+            GtG = G_j_block' * G_j_block;
+            GtG = (GtG + GtG') * 0.5;
+            lc(j_pos) = max(eig(GtG));
         end
     end
     lc(lc < eps) = eps;
     alpha_scaled_per_block = alpha_penalty_val ./ lc; 
 
-    fprintf('  BCD Solver: MaxIter=%d, Tol=%.1e, Nsources_proc=%d, Npos_proc=%d\n', max_iter, tol, Ns_proc, N_pos_proc);
+    if verbose
+        fprintf('  BCD Solver: MaxIter=%d, Tol=%.1e, Nsources_proc=%d, Npos_proc=%d\n', ...
+                max_iter, tol, Ns_proc, N_pos_proc);
+    end
 
     for iter_bcd = 1:max_iter
+        last_iter = iter_bcd;
         X_old_iter = X;
         
         for j_pos = 1:N_pos_proc
@@ -353,18 +398,14 @@ function [X_solved_active, active_set_mask, E_path] = local_mxne_bcd_solver(...
             G_j = G_solver(:, idx_block);
             X_j_current = X(idx_block, :);
             
-            % Gradient step 
             X_j_unthres = X_j_current + (1/lc(j_pos)) * (G_j' * R);
             group_norm_L2F = norm(X_j_unthres, 'fro');
             
-            % Soft Thresholding
             if group_norm_L2F <= alpha_scaled_per_block(j_pos)
                 X_j_new = zeros(O_orient, Nt_proc);
-                active_set_mask(idx_block) = false;
             else
                 shrink_factor = 1 - alpha_scaled_per_block(j_pos) / group_norm_L2F;
                 X_j_new = X_j_unthres * shrink_factor;
-                active_set_mask(idx_block) = true;
             end
             
             if any(X_j_new(:) ~= X_j_current(:))
@@ -374,56 +415,73 @@ function [X_solved_active, active_set_mask, E_path] = local_mxne_bcd_solver(...
             X(idx_block, :) = X_j_new;
         end
         
-        % --- Convergence Check via True Duality Gap ---
         if mod(iter_bcd, dgap_freq) == 0 || iter_bcd == max_iter || iter_bcd == 1
-            [actual_gap, p_obj, d_obj] = local_dgap_l21(M_data, G_solver, X, alpha_penalty_val, O_orient);
-            
-            E_path(end+1) = p_obj;
-            highest_d_obj = max(highest_d_obj, d_obj);
+            [actual_gap, p_obj, ~] = local_dgap_l21(M_data, G_solver, X, alpha_penalty_val, O_orient);
+            n_E = n_E + 1;
+            E_path(n_E) = p_obj;
             
             if iter_bcd > 1 
-                fprintf('    BCD Iter %4d: Pobj=%.4e, DGap=%.2e (Tol=%.1e), Nactive_locs=%d\n', ...
-                    iter_bcd, p_obj, actual_gap, tol, sum(any(reshape(active_set_mask,O_orient,[]),1)));
+                if verbose
+                    fprintf('    BCD Iter %4d: Pobj=%.4e, DGap=%.2e (Tol=%.1e), Nactive_locs=%d\n', ...
+                        iter_bcd, p_obj, actual_gap, tol, ...
+                        sum(any(reshape(local_compute_active_mask(X, O_orient), O_orient,[]),1)));
+                end
                 if actual_gap < tol
-                    fprintf('    BCD converged (Duality Gap).\n');
+                    if verbose, fprintf('    BCD converged (Duality Gap).\n'); end
+                    converged = true;
                     break;
                 end
             end
         end
         
-        % Fallback absolute change convergence
         if iter_bcd > 1 && norm(X(:) - X_old_iter(:),'fro') / (norm(X_old_iter(:),'fro')+eps) < tol/100
-            fprintf('    BCD converged (X change) at iter %d.\n', iter_bcd);
+            if verbose, fprintf('    BCD converged (X change) at iter %d.\n', iter_bcd); end
+            converged = true;
             break;
         end
     end
     
-    if iter_bcd == max_iter, warning('seal_MxNE:BCDSolverMaxIter', 'BCD solver reached max iterations.'); end
+    if ~converged
+        warning('seal_irMxNE:BCDSolverMaxIter', 'BCD solver reached max iterations (%d).', max_iter);
+    end
+    E_path = E_path(1:n_E);
+
+    % Recompute active mask from final X
+    active_set_mask = local_compute_active_mask(X, O_orient);
     X_solved_active = X(active_set_mask, :);
 end
 
 
-function [gap, p_obj, d_obj] = local_dgap_l21(M_data, G_full, X_full, alpha_val, nd)
-% Computes the rigorous Duality Gap for the L1/L2 mixed-norm across the FULL leadfield.
+function active_set_mask = local_compute_active_mask(X, O_orient)
+    [Ns, ~] = size(X);
+    if O_orient == 1
+        active_set_mask = any(X ~= 0, 2);
+    else
+        N_pos = Ns / O_orient;
+        active_blocks = false(N_pos, 1);
+        for j = 1:N_pos
+            idx = (j-1)*O_orient + (1:O_orient);
+            active_blocks(j) = any(any(X(idx, :) ~= 0));
+        end
+        active_set_mask = repelem(active_blocks, O_orient);
+    end
+end
 
+
+function [gap, p_obj, d_obj] = local_dgap_l21(M_data, G_full, X_full, alpha_val, nd)
     GX = G_full * X_full;
     R = M_data - GX;
     nR2 = sum(R(:).^2);
 
-    % --- Primal Objective ---
-    % Vectorized L2,1 norm of X
     if nd > 1
         X_tensor = reshape(X_full, nd, [], size(X_full, 2));
-        X_norms = sum(sqrt(sum(sum(X_tensor.^2, 1), 3))); % Sum of group Frobenius norms
+        X_norms = sum(sqrt(sum(sum(X_tensor.^2, 1), 3)));
     else
         X_norms = sum(sqrt(sum(X_full.^2, 2)));
     end
     p_obj = 0.5 * nR2 + alpha_val * X_norms;
 
-    % --- Dual Objective ---
     Gt_R = G_full' * R;
-    
-    % Vectorized L2,inf norm of G^T R
     if nd > 1
         Gt_R_tensor = reshape(Gt_R, nd, [], size(Gt_R, 2));
         dual_norms = sqrt(sum(sum(Gt_R_tensor.^2, 1), 3)); 
@@ -432,57 +490,49 @@ function [gap, p_obj, d_obj] = local_dgap_l21(M_data, G_full, X_full, alpha_val,
         dual_norm_l2inf = max(sqrt(sum(Gt_R.^2, 2)));
     end
 
-    % Safe scaling to enforce dual feasibility
     scaling = min(alpha_val / max(dual_norm_l2inf, eps), 1.0);
-
-    % Dual Objective Evaluation
-    % Derived from: <Y, scaling*R> - 0.5 * scaling^2 * ||R||^2
     d_obj = (scaling - 0.5 * (scaling^2)) * nR2 + scaling * sum(sum(R .* GX));
     
     gap = p_obj - d_obj;
     if isnan(gap) && ~isnan(p_obj), gap = p_obj; end
 end
 
-function D_debias = local_compute_bias(M_data, G_active_comp, X_active_comp, O_orient, max_iter_debias, tol_debias)
-% Solves: min_D 0.5 * || M_data - G_active_comp * diag(D_loc_avg_repeated) * X_active_comp ||_F^2
-% s.t. D_loc_avg_j >= 1 (for each source location j)
-% D_debias is N_active_comp x 1, but effectively N_active_pos x 1 then repeated.
+
+function D_debias = local_compute_bias(M_data, G_active_comp, X_active_comp, O_orient, max_iter_debias, tol_debias, verbose)
+% FISTA debiasing: solves min_D 0.5*||M - G*diag(D)*X||_F^2 s.t. D>=1.
 
 [N_active_comp, ~] = size(X_active_comp);
 N_pos_active = N_active_comp / O_orient;
 
-Dk_comp = ones(N_active_comp, 1); % Debiasing weights per component
-Yk_comp = ones(N_active_comp, 1); % FISTA extrapolation variable
+Dk_comp = ones(N_active_comp, 1);
+Yk_comp = ones(N_active_comp, 1);
 tk = 1.0;
 
 L_fista_val = 1.1 * local_power_iteration_kron( ...
         G_active_comp, X_active_comp, 1000, 1e-3, 0);
-fprintf('  Debiasing (FISTA): MaxIter=%d, Tol=%.1e, L_fista=%.2e\n', max_iter_debias, tol_debias, L_fista_val);
+if verbose
+    fprintf('  Debiasing (FISTA): MaxIter=%d, Tol=%.1e, L_fista=%.2e\n', ...
+            max_iter_debias, tol_debias, L_fista_val);
+end
 
+debias_converged = false;
 for iter_d = 1:max_iter_debias
     D0_comp = Dk_comp;
     
-    % Yk_comp is the FISTA extrapolation point for D_comp
-    % M_pred = G_active_comp * (diag(Yk_comp) * X_active_comp);
-    M_pred = G_active_comp * bsxfun(@times, X_active_comp, Yk_comp); % Equivalent if Yk_comp is column
+    M_pred = G_active_comp * bsxfun(@times, X_active_comp, Yk_comp);
     Residual = M_data - M_pred;
     
-    % Gradient of 0.5*||M - G*diag(D)*X||_F^2 w.r.t D_i (component i)
-    % Grad_D_i = - tr( (G(:,i) * X(i,:))' * Residual )
-    %            = - sum_{t} (G(:,i)' * Residual(:,t)) * X(i,t)
-    %            = - sum_{t} GtRes_it * X_it
-    Gt_Res = G_active_comp' * Residual; % N_active_comp x Nt
-    Grad_D_comp = -sum(Gt_Res .* X_active_comp, 2); % N_active_comp x 1
+    Gt_Res = G_active_comp' * Residual;
+    Grad_D_comp = -sum(Gt_Res .* X_active_comp, 2);
     
     D_update = Yk_comp - Grad_D_comp / L_fista_val;
     
-    % Proximal step: D_j_loc_avg >= 1
     if O_orient > 1
-        D_reshaped_loc = mean(reshape(D_update, O_orient, N_pos_active), 1)'; % N_pos_active x 1
+        D_reshaped_loc = mean(reshape(D_update, O_orient, N_pos_active), 1)';
         D_reshaped_loc = max(D_reshaped_loc, 1.0);
         Dk_comp = repelem(D_reshaped_loc, O_orient);
         Dk_comp = Dk_comp(:);
-    else % O_orient == 1
+    else
         Dk_comp = max(D_update, 1.0);
     end
     
@@ -492,61 +542,48 @@ for iter_d = 1:max_iter_debias
     
     d_diff = max(abs(Dk_comp - D0_comp));
     if d_diff < tol_debias && iter_d > 1
-        fprintf('    Debiasing converged after %d iterations (Diff=%.1e)\n', iter_d, d_diff);
+        if verbose, fprintf('    Debiasing converged after %d iterations (Diff=%.1e)\n', iter_d, d_diff); end
+        debias_converged = true;
         break;
     end
 end
-if iter_d == max_iter_debias, warning('seal_MxNE:DebiasMaxIter', 'Debiasing did not converge.'); end
-D_debias = Dk_comp; % N_active_comp x 1 vector of debiasing weights
+if ~debias_converged
+    warning('seal_irMxNE:DebiasMaxIter', 'Debiasing did not converge in %d iterations.', max_iter_debias);
 end
+D_debias = Dk_comp;
+end
+
 
 function local_check_option(value, allowed)
     if ~ismember(value, allowed)
-        error('Invalid value for %s. Allowed options are: %s', value, strjoin(allowed, ', '));
+        error('seal_irMxNE:InvalidOption', 'Invalid value: %s. Allowed: %s', value, strjoin(allowed, ', '));
     end
 end
 
+
 function group_L2_norms_sq_val = local_groups_norm2(A_matrix, n_orient_val, n_positions_val)
-% Compute squared L2 norms of groups (Frobenius norm for each block over time)
-% A_matrix is (n_positions_val*n_orient_val) x Ntime
-% Output is n_positions_val x 1
-    group_L2_norms_sq_val = zeros(n_positions_val, 1);
-    for i_pos = 1:n_positions_val
-        idx_block = (i_pos-1)*n_orient_val + (1:n_orient_val);
-        block_A = A_matrix(idx_block, :); % n_orient_val x Ntime
-        group_L2_norms_sq_val(i_pos) = sum(block_A(:).^2); % Squared Frobenius norm of block
+% Squared Frobenius norm per group (vectorized).
+    if n_orient_val == 1
+        group_L2_norms_sq_val = sum(A_matrix.^2, 2);
+    else
+        % Reshape: (n_orient * n_pos) x Nt -> n_orient x n_pos x Nt
+        A_tensor = reshape(A_matrix, n_orient_val, n_positions_val, []);
+        group_L2_norms_sq_val = squeeze(sum(sum(A_tensor.^2, 1), 3));
+        group_L2_norms_sq_val = group_L2_norms_sq_val(:);   % ensure column
     end
 end
+
 
 function L = local_power_iteration_kron(A, C, max_iter, tol, random_seed)
 %LOCAL_POWER_ITERATION_KRON
-% Estimate the largest singular value associated with kron(C', A)
-%
-% This computes the Lipschitz constant used in MxNE debiasing.
-%
-% Inputs:
-%   A           : [Nchan x Nsrc_active]
-%   C           : [Nsrc_active x Nt]
-%   max_iter    : max number of power iterations
-%   tol         : stopping tolerance on |L - L0|
-%   random_seed : scalar RNG seed (default = 0)
-%
-% Output:
-%   L           : estimated largest singular value
+% Estimate the largest singular value associated with kron(C', A).
 
-    if nargin < 3 || isempty(max_iter)
-        max_iter = 1000;
-    end
-    if nargin < 4 || isempty(tol)
-        tol = 1e-3;
-    end
-    if nargin < 5 || isempty(random_seed)
-        random_seed = 0;
-    end
+    if nargin < 3 || isempty(max_iter), max_iter = 1000; end
+    if nargin < 4 || isempty(tol),      tol = 1e-3; end
+    if nargin < 5 || isempty(random_seed), random_seed = 0; end
 
     AS_size = size(C, 1);
 
-    % Preserve caller RNG state
     rng_state = rng;
     cleanupObj = onCleanup(@() rng(rng_state)); 
     rng(random_seed, 'twister');
