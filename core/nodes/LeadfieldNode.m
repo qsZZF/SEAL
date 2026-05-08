@@ -240,6 +240,11 @@ classdef LeadfieldNode < BaseNode
                 end
 
                 ori = nCols / nVertices;
+
+                if ori ~=3 &&ori ~= 1
+                    ori = 'Not Match';
+                end
+
             catch
                 % 出错就保持默认值
             end
@@ -261,7 +266,6 @@ classdef LeadfieldNode < BaseNode
         end
 
         function metadata = getMetadata(obj)
-             %orientationStr = obj.computeOrientationString();
             metadata =  obj.getMetadata@BaseNode();
             metadata = [metadata;
                 "Head Model Type", string(obj.headModelType);
