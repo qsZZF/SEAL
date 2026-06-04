@@ -9,8 +9,8 @@ reg.MNE = struct( ...
     'parent','minL2', ...
     'title','MNE Settings', ...
     'params',{{
-    {'RegularizationParameter','RegParam','numeric',0.1}
-    {'sourceCovariance','SourceCov','edit','depth_weighted'}
+    {'RegularizationParameter','RegParam','numeric',1/3}
+    {'sourceCovariance','SourceCov','edit','brainstorm_depth'}
     }});
 
 reg.dSPM = struct('parent','minL2','title','dSPM Settings','params',{{
@@ -18,8 +18,7 @@ reg.dSPM = struct('parent','minL2','title','dSPM Settings','params',{{
     }});
 
 reg.sLORETA = struct('parent','minL2','title','sLORETA Settings','params',{{
-    {'RegularizationParameter','RegParam','numeric',0.1}
-    {'sourceCovariance','SourceCov','edit','depth_weighted'}
+    {'RegularizationParameter','RegParam','numeric',1/3}
     }});
 
 reg.eLORETA = struct('parent','minL2','title','eLORETA Settings','params',{{ ...

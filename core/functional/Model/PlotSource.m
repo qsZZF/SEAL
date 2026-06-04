@@ -30,6 +30,7 @@ end
 if nargin<1
     SourceData = [];
 end
+SourceData = double(SourceData(:));
 
 if isfield(BrainModel,'vertices')
     vc=BrainModel.vertices;
@@ -65,13 +66,24 @@ ax2plot = [];
 CLim = [0,1];
 figPosition = []; % 默认不指定位置
 colorMap = CBar('mjet');
+thresh = [];
+valueMode = 'native';
+isExplicitThreshold = false;
+isExplicitCLim = false;
+isExplicitColorMap = false;
 if ~isempty(SourceData)
     if min(SourceData)<0
         CLim = [-1 1];
         colorMap = CBar('pnactive');
     end
-thresh = otsu(abs(SourceData)/max(abs(SourceData)));
-CLim = CLim*max(abs(SourceData));
+autoMax = max(abs(SourceData));
+if ~isfinite(autoMax) || autoMax <= 0
+    autoMax = eps;
+    thresh = 0;
+else
+    thresh = otsu(abs(SourceData)/autoMax);
+end
+CLim = CLim*autoMax;
 end
 % colorMap = jet;
 cortexcolor=[0.9, 0.7, 0.7];
@@ -98,13 +110,17 @@ if nargs > 3
                 end
             case 'colormap'
                 colorMap = Value;
-                if strcmpi(Value,'active')||strcmpi(Value,'pnactive')||strcmpi(Value,'mjet')||strcmpi(Value,'invactive')||strcmpi(Value,'iactive')
-                    colorMap = CBar(Value);
+                isExplicitColorMap = true;
+                if (ischar(Value) || isstring(Value)) && ...
+                        (strcmpi(Value,'active')||strcmpi(Value,'pnactive')||strcmpi(Value,'mjet')|| ...
+                         strcmpi(Value,'invactive')||strcmpi(Value,'iactive')||strcmpi(Value,'brainstorm')||strcmpi(Value,'source'))
+                    colorMap = CBar(char(Value));
                 elseif size(Value,2)~=3
                     error('Colormap must be a n x 3 matrix')
                 end
             case 'clim'
                 CLim = Value;
+                isExplicitCLim = true;
                 if numel(CLim)~=2
                     error('Color Limit must be 1 x 2 vector');
                 end
@@ -115,18 +131,52 @@ if nargs > 3
             case 'hemisphere'
                 hemisphere =  Value;
             case 'thresh'               
-                if thresh>1||thresh<0
+                if Value>1||Value<0
                     warning('thresh must be in (0 1),using 0.05 instead');
                 else
                     thresh = Value;
+                    isExplicitThreshold = true;
                 end
             case 'alpha'
                 alphaValue = Value;
+            case {'valuemode', 'displaymode'}
+                valueMode = lower(char(Value));
             case 'position'
                 figPosition = Value;
                 if numel(figPosition) ~= 4
                      error('Position must be [left, bottom, width, height] ');
                 end
+        end
+    end
+end
+
+if ~isempty(SourceData)
+    isBrainstormMode = any(strcmp(valueMode, {'brainstorm', 'abs', 'absolute', 'amplitude'}));
+    if isBrainstormMode
+        SourceData = abs(SourceData);
+        if ~isExplicitColorMap
+            colorMap = CBar('brainstorm');
+        end
+        if ~isExplicitThreshold
+            thresh = 0.5;
+            isExplicitThreshold = true;
+        end
+        if ~isExplicitCLim
+            maxVal = max(abs(SourceData));
+            if ~isfinite(maxVal) || maxVal <= 0
+                maxVal = eps;
+            end
+            CLim = [0 maxVal];
+        end
+    elseif ~isExplicitCLim
+        maxVal = max(abs(SourceData));
+        if ~isfinite(maxVal) || maxVal <= 0
+            maxVal = eps;
+        end
+        if min(SourceData) < 0
+            CLim = [-maxVal maxVal];
+        else
+            CLim = [0 maxVal];
         end
     end
 end
@@ -183,7 +233,11 @@ light('Position',[100,0,100]*mean(sum(vc.^2,2)));
 set(handles.axes, 'CameraUpVector', [0, 1, 0]);
 
 if ~isempty(SourceData)
-    [Valpha,cdata]=seal_bulidsource(SourceData,vc,[],colorMap, handles.axes);
+    plotArgs = {'clim', CLim};
+    if isExplicitThreshold
+        plotArgs = [plotArgs, {'threshold', thresh}];
+    end
+    [Valpha,cdata]=seal_bulidsource(SourceData,vc,[],colorMap, handles.axes, plotArgs{:});
     set(handles.hp,'FaceAlpha','flat','AlphaDataMapping','none',...
         'FaceVertexAlphaData',Valpha, ...
         'FaceVertexCData',cdata,...
@@ -233,6 +287,9 @@ switch type
         cbars = [0.8 0 0;0.8 0.4 0;0.8 0.8 0;0.4 0.8 0.4;0 0.8 0.8;0 0.4 0.8;0 0 0.8];
     case 'pnactive'
         cbars = [1 1 0.5;1 0.6 0;1 0 0;0 0 0;0 0 1;0 0.6 1; 0.5 1 1];
+    case {'brainstorm', 'source'}
+        cbars = seal_brainstorm_colormap(256);
+        return;
 end
 
 

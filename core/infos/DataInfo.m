@@ -147,6 +147,8 @@ classdef DataInfo < handle
 
                 isBrainstorm = ismember('F', varNames) && ismember('Time', varNames);
 
+                eventData = [];
+
                 if isBrainstorm
                     % ==========================================
                     % 路线 A：Brainstorm 极速通道（延迟加载）
@@ -157,8 +159,17 @@ classdef DataInfo < handle
                     idxF = strcmp(varNames, 'F');
                     dataSize = fileVars(idxF).size;
 
+                    eventAliases = {'event', 'events', 'Event', 'Events', ...
+                        'markers', 'Markers', 'marker', 'Marker', ...
+                        'triggers', 'Triggers', 'trigger', 'Trigger'};
+                    matchedEventField = findFirstMatch(eventAliases, varNames);
+
                     % 只加载轻量级变量
                     varsToLoad = {'Time', 'Comment', 'Events', 'ChannelFlag', 'ChannelLocs'};
+                    if ~isempty(matchedEventField)
+                        varsToLoad{end+1} = matchedEventField;
+                    end
+                    varsToLoad = unique(varsToLoad, 'stable');
                     varsExist = varsToLoad(ismember(varsToLoad, varNames));
                     lightData = load(dataPath, varsExist{:}, '-mat');
 
@@ -170,8 +181,12 @@ classdef DataInfo < handle
                     end
 
                     % 元数据
-                    if isfield(lightData, 'Events')
-                        metadata.events = lightData.Events;
+                    if ~isempty(matchedEventField) && isfield(lightData, matchedEventField)
+                        metadata.eventsRaw = lightData.(matchedEventField);
+                        metadata.eventField = matchedEventField;
+                        eventData = DataInfo.normalizeEvents( ...
+                            lightData.(matchedEventField), dataSrate, dataSize, lightData.Time);
+                        metadata.events = eventData;
                     end
                     if isfield(lightData, 'ChannelFlag')
                         metadata.badChannels = lightData.ChannelFlag;
@@ -223,10 +238,17 @@ classdef DataInfo < handle
                     srateAliases    = {'srate', 'SamplingRate', 'fs', 'sfreq', 'sRate'};
                     chanlocsAliases = {'chanlocs', 'Channel', 'channels', 'chaninfo', ...
                         'electrodes', 'locs', 'labels'};
+                    eventAliases    = {'event', 'events', 'Event', 'Events', ...
+                        'markers', 'Markers', 'marker', 'Marker', ...
+                        'triggers', 'Triggers', 'trigger', 'Trigger'};
+                    timeAliases     = {'Time', 'time', 'Times', 'times', ...
+                        'TimeVector', 'timeVector', 't'};
 
                     matchedDataField     = findFirstMatch(dataAliases,     availableFields);
                     matchedSrateField    = findFirstMatch(srateAliases,    availableFields);
                     matchedChanlocsField = findFirstMatch(chanlocsAliases, availableFields);
+                    matchedEventField    = findFirstMatch(eventAliases,    availableFields);
+                    matchedTimeField     = findFirstMatch(timeAliases,     availableFields);
 
                     % 数据字段：必须匹配，否则弹窗
                     if isempty(matchedDataField)
@@ -274,6 +296,18 @@ classdef DataInfo < handle
                         dataChanlocs = [];
                     end
 
+                    if ~isempty(matchedEventField)
+                        timeVector = [];
+                        if ~isempty(matchedTimeField)
+                            timeVector = loadedData.(matchedTimeField);
+                        end
+                        metadata.eventsRaw = loadedData.(matchedEventField);
+                        metadata.eventField = matchedEventField;
+                        eventData = DataInfo.normalizeEvents( ...
+                            loadedData.(matchedEventField), dataSrate, dataSize, timeVector);
+                        metadata.events = eventData;
+                    end
+
                     metadata.targetField = matchedDataField;
                 end
 
@@ -291,6 +325,7 @@ classdef DataInfo < handle
                 data.srate    = round(dataSrate);
                 data.unit     = dataUnit;
                 data.chanlocs = dataChanlocs;
+                data.event    = eventData;
 
             catch ME
                 error('SEAL:DataInfo:ImportFailed', ...
@@ -447,6 +482,147 @@ classdef DataInfo < handle
         end
 
 
+
+        function eventOut = normalizeEvents(eventIn, srate, dataSize, timeVector)
+            eventOut = [];
+            if nargin < 4
+                timeVector = [];
+            end
+            if isempty(eventIn)
+                return;
+            end
+
+            if istable(eventIn)
+                eventIn = table2struct(eventIn);
+            end
+
+            nTime = [];
+            if ~isempty(dataSize) && numel(dataSize) >= 2
+                nTime = double(dataSize(2));
+            end
+
+            timeStart = 0;
+            if ~isempty(timeVector) && isnumeric(timeVector)
+                timeStart = double(timeVector(1));
+            end
+
+            if isnumeric(eventIn)
+                vals = double(eventIn(:)');
+                if isempty(vals)
+                    return;
+                end
+                if ~isempty(nTime) && all(abs(vals - round(vals)) < 1e-9) && ...
+                        all(vals >= 1) && all(vals <= nTime)
+                    latencies = round(vals);
+                else
+                    latencies = round((vals - timeStart) .* double(srate)) + 1;
+                end
+                eventOut = DataInfo.makeEventStruct(latencies, repmat({'Event'}, size(latencies)), []);
+                return;
+            end
+
+            if ~isstruct(eventIn)
+                return;
+            end
+
+            fields = fieldnames(eventIn);
+            if ismember('latency', fields)
+                latencies = round(double([eventIn.latency]));
+                if ismember('type', fields)
+                    types = {eventIn.type};
+                elseif ismember('label', fields)
+                    types = {eventIn.label};
+                else
+                    types = repmat({'Event'}, size(latencies));
+                end
+                eventOut = DataInfo.makeEventStruct(latencies, types, eventIn);
+                return;
+            end
+
+            if ismember('times', fields)
+                eventList = struct('type', {}, 'latency', {}, 'urevent', {}, 'duration', {}, 'epoch', {});
+                for iEv = 1:numel(eventIn)
+                    ev = eventIn(iEv);
+                    if ~isfield(ev, 'times') || isempty(ev.times)
+                        continue;
+                    end
+
+                    times = double(ev.times);
+                    if isvector(times)
+                        onsetTimes = times(:)';
+                        offsetTimes = [];
+                    else
+                        onsetTimes = times(1, :);
+                        if size(times, 1) >= 2
+                            offsetTimes = times(2, :);
+                        else
+                            offsetTimes = [];
+                        end
+                    end
+
+                    if isfield(ev, 'label') && ~isempty(ev.label)
+                        evType = ev.label;
+                    elseif isfield(ev, 'type') && ~isempty(ev.type)
+                        evType = ev.type;
+                    else
+                        evType = 'Event';
+                    end
+
+                    epochs = [];
+                    if isfield(ev, 'epochs') && ~isempty(ev.epochs)
+                        epochs = ev.epochs;
+                    end
+
+                    latencies = round((onsetTimes - timeStart) .* double(srate)) + 1;
+                    for k = 1:numel(latencies)
+                        newEvent = struct();
+                        newEvent.type = evType;
+                        newEvent.latency = latencies(k);
+                        newEvent.urevent = numel(eventList) + 1;
+                        if ~isempty(offsetTimes) && k <= numel(offsetTimes)
+                            newEvent.duration = max(0, round((offsetTimes(k) - onsetTimes(k)) .* double(srate)));
+                        else
+                            newEvent.duration = [];
+                        end
+                        if ~isempty(epochs) && k <= numel(epochs)
+                            newEvent.epoch = epochs(k);
+                        else
+                            newEvent.epoch = [];
+                        end
+                        eventList(end+1) = newEvent; %#ok<AGROW>
+                    end
+                end
+                eventOut = eventList;
+            end
+        end
+
+        function eventOut = makeEventStruct(latencies, types, eventIn)
+            eventOut = struct('type', {}, 'latency', {}, 'urevent', {}, 'duration', {}, 'epoch', {});
+            if isempty(latencies)
+                return;
+            end
+            if ~iscell(types)
+                types = num2cell(types);
+            end
+            if numel(types) == 1 && numel(latencies) > 1
+                types = repmat(types, size(latencies));
+            end
+            for iEv = 1:numel(latencies)
+                eventOut(iEv).type = types{min(iEv, numel(types))};
+                eventOut(iEv).latency = latencies(iEv);
+                eventOut(iEv).urevent = iEv;
+                eventOut(iEv).duration = [];
+                eventOut(iEv).epoch = [];
+                if nargin >= 3 && isstruct(eventIn) && numel(eventIn) >= iEv
+                    if isfield(eventIn, 'duration')
+                        eventOut(iEv).duration = eventIn(iEv).duration;
+                    end
+                    if isfield(eventIn, 'epoch')
+                        eventOut(iEv).epoch = eventIn(iEv).epoch;
+                    end
+                end
+            end
+        end
 
         function unit = detectDataUnit(dataMatrix)
             %DETECTDATAUNIT 根据数据数量级猜测单位

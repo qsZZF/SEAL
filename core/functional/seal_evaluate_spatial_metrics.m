@@ -3,8 +3,8 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
 %   Results = seal_evaluate_spatial_metrics(estimated_source_activity, ...
 %                                   true_active_indices, sourceSpaceInfo, 'ParameterName', ParameterValue, ...)
 %
-%   This function calculates various spatial metrics including DLE, SD, ROC AUC,
-%   Precision-Recall AUC, F1-score, Precision, Recall, and APrime.
+%   This function calculates various spatial metrics including DLE, SD, EMD,
+%   ROC AUC, Precision-Recall AUC, F1-score, Precision, Recall, and APrime.
 %   Helper functions for individual metrics are embedded as local functions.
 %
 %   Inputs:
@@ -24,7 +24,8 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
 %
 %   Optional Name-Value Pair Inputs:
 %       'MetricsToCompute' (cell array of strings): Which metrics to compute.
-%           Options: {'DLE', 'SD', 'ROC_AUC', 'PR_AUC', 'F1', 'Precision', 'Recall', 'APrime'}.
+%           Options: {'DLE', 'SD', 'EMD', 'ROC_AUC', 'PR_AUC', 'F1',
+%                     'Precision', 'Recall', 'APrime', 'MSE'}.
 %           Default: {'DLE', 'SD', 'ROC_AUC', 'PR_AUC', 'F1'}.
 %       'DistanceType' (char/string): For DLE and SD. 'euclidean' (default), 'geodesic'.
 %                                     If 'geodesic', uses GeodesicDistanceMatrix if available,
@@ -38,6 +39,21 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
 %       'NumStepsROC' (integer): Number of threshold steps for ROC/PR AUC. Default: 100.
 %       'RepsROC' (integer): Number of repetitions for ROC AUC bias correction. Default: 50.
 %       'OrderROC' (integer): Max neighbor order for ROC AUC close field. Default: 6.
+%       'EMDLambda' (scalar): Entropic regularization for Sinkhorn. Default: 1.
+%       'EMDMaxIter' (integer): Max Sinkhorn iterations. Default: 500.
+%       'EMDTolerance' (scalar): Sinkhorn convergence tolerance. Default: 1e-5.
+%       'EMDMaxSources' (integer/Inf): Max strongest estimated sources used for
+%                                     EMD approximation. True active sources are
+%                                     always included. Default: 1000.
+%       'EMDCostMatrix' (matrix): Optional full or selected-source cost matrix.
+%       'EMDTrueDistribution' (vector): Optional Nsources x 1 true distribution.
+%                                     Defaults to uniform mass over true_active_indices.
+%       'EstimatedSourceTimeSeries' (matrix): Nsources x Ntime estimated source
+%                                     time series. Required for 'mse'.
+%       'TrueSourceTimeSeries' (matrix): Nsources x Ntime ground-truth source
+%                                     time series. Required for 'mse'.
+%       'TemporalRoiIndices' (cell/vector): ROI/source indices used for temporal
+%                                     correlation summaries. Defaults to active_seedVox.
 %
 %   Outputs:
 %       Results (struct): A structure containing the calculated metrics.
@@ -67,7 +83,7 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
     addRequired(p, 'sourceSpaceInfo', @(x) isstruct(x));
     
     defaultMetrics = {'dle', 'sd', 'roc_auc', 'pr_auc', 'f1'};
-    validMetrics = {'dle', 'sd', 'roc_auc', 'pr_auc', 'f1', 'precision', 'recall', 'aprime'};
+    validMetrics = {'dle', 'sd', 'emd', 'roc_auc', 'pr_auc', 'f1', 'precision', 'recall', 'aprime','mse'};
 
     addParameter(p, 'MetricsToCompute', defaultMetrics, @(x) (iscellstr(x) || ischar(x) || isstring(x)) && all(ismember(lower(cellstr(x)), validMetrics)) );
     addParameter(p, 'DistanceType', 'euclidean', @(x) ismember(lower(x), {'euclidean', 'geodesic'}));
@@ -75,6 +91,15 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
     addParameter(p, 'NumStepsROC', 100, @(x) isnumeric(x) && isscalar(x) && x > 1);
     addParameter(p, 'RepsROC', 50, @(x) isnumeric(x) && isscalar(x) && x >= 1);
     addParameter(p, 'OrderROC', 6, @(x) isnumeric(x) && isscalar(x) && x >= 0);
+    addParameter(p, 'EMDLambda', 1, @(x) isnumeric(x) && isscalar(x) && x > 0);
+    addParameter(p, 'EMDMaxIter', 500, @(x) isnumeric(x) && isscalar(x) && x >= 1);
+    addParameter(p, 'EMDTolerance', 1e-5, @(x) isnumeric(x) && isscalar(x) && x > 0);
+    addParameter(p, 'EMDMaxSources', 1000, @(x) isnumeric(x) && isscalar(x) && (isinf(x) || x >= 1));
+    addParameter(p, 'EMDCostMatrix', [], @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
+    addParameter(p, 'EMDTrueDistribution', [], @(x) isempty(x) || (isnumeric(x) && isvector(x)));
+    addParameter(p, 'EstimatedSourceTimeSeries', [], @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
+    addParameter(p, 'TrueSourceTimeSeries', [], @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
+    addParameter(p, 'TemporalRoiIndices', [], @(x) isempty(x) || isnumeric(x) || iscell(x));
 
     parse(p, estimated_source_activity, true_active_indices,  active_seedVox, sourceSpaceInfo, varargin{:});
 
@@ -99,6 +124,17 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
     if any(true_active_idx_input > Nsources)
         error('true_active_indices contains out-of-bounds indices.');
     end
+    s_est_time = p.Results.EstimatedSourceTimeSeries;
+    s_real_time = p.Results.TrueSourceTimeSeries;
+    if ~isempty(s_est_time) && size(s_est_time, 1) ~= Nsources
+        error('Rows of EstimatedSourceTimeSeries must match Nsources.');
+    end
+    if ~isempty(s_real_time) && size(s_real_time, 1) ~= Nsources
+        error('Rows of TrueSourceTimeSeries must match Nsources.');
+    end
+    if ~isempty(s_est_time) && ~isempty(s_real_time) && size(s_est_time, 2) ~= size(s_real_time, 2)
+        error('EstimatedSourceTimeSeries and TrueSourceTimeSeries must have the same number of time points.');
+    end
 
     s_est_abs = abs(s_est_input);
 %     s_est_abs_for_mag_metrics = s_est_abs_for_mag_metrics/max(s_est_abs_for_mag_metrics);
@@ -121,6 +157,52 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
          Results.ParamsUsed.DistanceTypeResolved = 'euclidean';
     end
 
+    %% EMD
+    if any(strcmpi('emd', metricsToCompute))
+        try
+            [emd_val, emd_details] = compute_emd_metric( ...
+                s_est_abs, true_active_idx_input, srcInfo_main, distanceType_internal, ...
+                p.Results.EMDLambda, p.Results.EMDMaxIter, p.Results.EMDTolerance, ...
+                p.Results.EMDMaxSources, p.Results.EMDCostMatrix, p.Results.EMDTrueDistribution);
+            Results.EMD = emd_val;
+            Results.EMD_Details = emd_details;
+        catch ME_emd
+            warning('seal_evaluate_spatial_metrics:EMDFailed', ...
+                'EMD calculation failed: %s', ME_emd.message);
+            Results.EMD = NaN;
+            Results.EMD_Details = struct();
+        end
+    end
+
+    %% MSE
+    if any(strcmpi('mse', metricsToCompute))
+        if isempty(s_est_time) || isempty(s_real_time)
+            warning('seal_evaluate_spatial_metrics:MSEMissingTimeSeries', ...
+                'MSE requires EstimatedSourceTimeSeries and TrueSourceTimeSeries. Skipping MSE.');
+            Results.MSE_Values = NaN;
+            Results.CORRall = NaN;
+            Results.CORRroi = NaN;
+            Results.CORRavg = NaN;
+        else
+            try
+                temporal_roi_indices = p.Results.TemporalRoiIndices;
+                if isempty(temporal_roi_indices)
+                    temporal_roi_indices = active_seedVox;
+                end
+                [MSE,CORRall,CORRroi,CORRavg] = ESItemporalMetric(s_est_time,s_real_time,temporal_roi_indices);
+                Results.MSE_Values = MSE;
+                Results.CORRall = CORRall;
+                Results.CORRroi = CORRroi;
+                Results.CORRavg = CORRavg;
+            catch MSE_dle
+                warning('seal_evaluate_spatial_metrics:MSEFailed', 'MSE calculation failed: %s', MSE_dle.message);
+                Results.MSE_Values = NaN;
+                Results.CORRall = NaN;
+                Results.CORRroi = NaN;
+                Results.CORRavg = NaN;
+            end
+        end
+    end
 
     %% DLE & SD Calculation
     if any(strcmpi('dle', metricsToCompute)) || any(strcmpi('sd', metricsToCompute))
@@ -234,6 +316,144 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
 end
 
 %% --- Functions for Metrics ---
+
+function [emd_val, emd_details] = compute_emd_metric(s_est_abs, true_active_idx, srcInfo_local, distanceType_resolved, lambda, max_iter, tol, max_sources, cost_matrix_input, true_distribution_input)
+    Nsources_local = size(srcInfo_local.Vertices, 1);
+
+    if isempty(true_distribution_input)
+        true_distribution = zeros(Nsources_local, 1);
+        true_distribution(true_active_idx) = 1;
+    else
+        true_distribution = true_distribution_input(:);
+        if length(true_distribution) ~= Nsources_local
+            error('EMDTrueDistribution length must match Nsources.');
+        end
+        if any(true_distribution < 0)
+            error('EMDTrueDistribution must be nonnegative.');
+        end
+    end
+
+    [dist_est, dist_true, emd_source_idx, is_approx] = prepare_emd_distributions( ...
+        s_est_abs, true_distribution, max_sources);
+    cost_matrix = resolve_emd_cost_matrix( ...
+        cost_matrix_input, srcInfo_local, distanceType_resolved, emd_source_idx, Nsources_local);
+
+    emd_val = calculate_emd_sinkhorn(dist_est, dist_true, cost_matrix, lambda, max_iter, tol);
+    emd_details = struct();
+    emd_details.SourceIndices = emd_source_idx;
+    emd_details.NumSourcesUsed = numel(emd_source_idx);
+    emd_details.IsApproximate = is_approx;
+    emd_details.RequestedMaxSources = max_sources;
+    emd_details.DistanceTypeResolved = distanceType_resolved;
+    emd_details.Lambda = lambda;
+    emd_details.MaxIter = max_iter;
+    emd_details.Tolerance = tol;
+end
+
+function [dist_est, dist_true, source_idx, is_approx] = prepare_emd_distributions(s_est_abs, true_distribution, max_sources)
+    s_est_abs = s_est_abs(:);
+    true_distribution = true_distribution(:);
+    Nsources_local = length(s_est_abs);
+
+    if length(true_distribution) ~= Nsources_local
+        error('Estimated and true EMD distributions must have the same length.');
+    end
+    if any(s_est_abs < 0) || any(true_distribution < 0)
+        error('EMD distributions must be nonnegative.');
+    end
+    if sum(s_est_abs) <= eps
+        error('Estimated source activity has zero total mass.');
+    end
+    if sum(true_distribution) <= eps
+        error('True EMD distribution has zero total mass.');
+    end
+
+    if isinf(max_sources) || Nsources_local <= max_sources
+        source_idx = (1:Nsources_local)';
+    else
+        est_scores = s_est_abs;
+        est_scores(~isfinite(est_scores)) = 0;
+        [~, sorted_idx] = sort(est_scores, 'descend');
+        n_est_keep = min(floor(max_sources), Nsources_local);
+        est_support = sorted_idx(1:n_est_keep);
+        true_support = find(true_distribution > 0);
+        source_idx = unique([true_support(:); est_support(:)]);
+    end
+
+    dist_est = s_est_abs(source_idx);
+    dist_true = true_distribution(source_idx);
+    dist_est = dist_est / sum(dist_est);
+    dist_true = dist_true / sum(dist_true);
+    is_approx = numel(source_idx) < Nsources_local;
+end
+
+function cost_matrix = resolve_emd_cost_matrix(cost_matrix_input, srcInfo_local, distanceType_resolved, source_idx, Nsources_local)
+    n_used = numel(source_idx);
+
+    if ~isempty(cost_matrix_input)
+        if isequal(size(cost_matrix_input), [Nsources_local, Nsources_local])
+            cost_matrix = cost_matrix_input(source_idx, source_idx);
+        elseif isequal(size(cost_matrix_input), [n_used, n_used])
+            cost_matrix = cost_matrix_input;
+        else
+            error('EMDCostMatrix must be either Nsources x Nsources or NumSourcesUsed x NumSourcesUsed.');
+        end
+    else
+        switch distanceType_resolved
+            case 'geodesic_matrix'
+                cost_matrix = srcInfo_local.GeodesicDistanceMatrix(source_idx, source_idx);
+            case 'geodesic_graph'
+                cost_matrix = compute_geodesic_emd_cost_matrix(srcInfo_local, source_idx);
+            otherwise
+                cost_matrix = compute_pairwise_euclidean(srcInfo_local.Vertices(source_idx, :));
+        end
+    end
+
+    cost_matrix = double(cost_matrix);
+    bad_cost = ~isfinite(cost_matrix);
+    if any(bad_cost(:))
+        finite_cost = cost_matrix(isfinite(cost_matrix));
+        finite_cost = finite_cost(finite_cost > 0);
+        if isempty(finite_cost)
+            replacement_cost = 0;
+        else
+            replacement_cost = 2 * max(finite_cost);
+        end
+        cost_matrix(bad_cost) = replacement_cost;
+    end
+    cost_matrix(1:n_used+1:end) = 0;
+end
+
+function cost_matrix = compute_pairwise_euclidean(coords)
+    if exist('pdist2', 'file') == 2
+        cost_matrix = pdist2(coords, coords, 'euclidean');
+    else
+        sq_norm = sum(coords.^2, 2);
+        sq_dist = bsxfun(@plus, sq_norm, sq_norm') - 2 * (coords * coords');
+        cost_matrix = sqrt(max(sq_dist, 0));
+    end
+end
+
+function cost_matrix = compute_geodesic_emd_cost_matrix(srcInfo_local, source_idx)
+    if ~isfield(srcInfo_local, 'VertConn') || isempty(srcInfo_local.VertConn) || exist('graphshortestpath', 'file') ~= 2
+        warning('seal_evaluate_spatial_metrics:EMDGeodesicFallback', ...
+            'Geodesic EMD cost matrix is unavailable. Falling back to Euclidean distances.');
+        cost_matrix = compute_pairwise_euclidean(srcInfo_local.Vertices(source_idx, :));
+        return;
+    end
+
+    Nsources_local = size(srcInfo_local.Vertices, 1);
+    [row, col] = find(srcInfo_local.VertConn);
+    weights = sqrt(sum((srcInfo_local.Vertices(row,:) - srcInfo_local.Vertices(col,:)).^2, 2));
+    weighted_adj = sparse(row, col, weights, Nsources_local, Nsources_local);
+
+    n_used = numel(source_idx);
+    cost_matrix = zeros(n_used, n_used);
+    for k = 1:n_used
+        dists = graphshortestpath(weighted_adj, source_idx(k));
+        cost_matrix(k, :) = dists(source_idx);
+    end
+end
 
 function [dle_values, mean_dle, sd_value, estimated_peak_indices_for_true] = compute_DLE_SD(true_loc_idx_unique, s_est_abs, srcInfo_local, distanceType_resolved)
     % DLE and SD
@@ -395,4 +615,48 @@ function [auc_pr, precision_recall_curve, ParamPR_local] = compute_pr_auc(s_est_
     end
     precision_recall_curve = [unique_pr_pts(:,1), unique_precision_mono];
     auc_pr = trapz(precision_recall_curve(:,1), precision_recall_curve(:,2));
+end
+
+function [MSE,CORRall,CORRroi,CORRavg] = ESItemporalMetric(s_est,s_real,activevoxseed)
+
+    real_norm = norm(s_real, 'fro');
+    est_norm = norm(s_est, 'fro');
+    s_real_norm = s_real/real_norm;
+    s_est_norm = s_est/est_norm;
+    if real_norm < eps || est_norm < eps
+        MSE = NaN;
+    else
+        MSE = norm(s_real_norm - s_est_norm, 'fro');
+    end
+
+
+    activevox = [];
+    if isempty(activevoxseed)
+        CORRavg = NaN;
+        CORRroi = NaN;
+        activevoxseed = {};
+    elseif isnumeric(activevoxseed)
+        activevoxseed = num2cell(activevoxseed(:)');
+    end
+    numK = numel(activevoxseed);
+    Sgt = zeros(numK,size(s_est_norm,2));
+    Src = Sgt;
+    for k = 1:numK
+        tseed = activevoxseed{k};
+        activevox = union(activevox,tseed);
+        Sgt(k,:) = mean(s_real_norm(tseed,:));
+        Src(k,:) = mean(s_est_norm(tseed,:));
+    end
+    Sgt = Sgt-mean(Sgt,2); Src = Src-mean(Src,2);
+    CORRavg = mean(abs(sum(Sgt.*Src,2))./sqrt(sum(Sgt.^2,2).*sum(Src.^2,2)+1e-16));
+
+    S_centered = s_real_norm - mean(s_real_norm,2);
+    S_est_centerd = s_est_norm - mean(s_est_norm,2);
+    CORRvox = abs(sum(S_centered.*S_est_centerd,2))./sqrt(sum(S_centered.^2,2).*sum(S_est_centerd.^2,2)+1e-16);
+    CORRall = mean(CORRvox);
+    if ~isempty(activevox)
+        CORRroi = mean(CORRvox(activevox));
+    end
+
+
 end

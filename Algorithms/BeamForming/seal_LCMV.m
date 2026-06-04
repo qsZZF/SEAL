@@ -48,21 +48,29 @@ function [Source_LCMV, Param_LCMV] = seal_LCMV(Data, L, varargin)
     addParameter(p, 'Type', defaultType, @(x) ischar(x) || isstring(x));
     addParameter(p, 'DataCovariance', [], @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
     addParameter(p, 'NoiseCovariance', [], @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
-    addParameter(p, 'RegularizationParameter', defaultRegParam, @isscalar);
-    addParameter(p, 'NumOrientations', defaultNumOrientations, @isscalar);
-    addParameter(p, 'ScalarBeamformer', defaultScalar, @islogical);
+    addParameter(p, 'RegularizationParameter', defaultRegParam, ...
+        @(x) isnumeric(x) && isscalar(x) && isfinite(x) && x >= 0);
+    addParameter(p, 'NumOrientations', defaultNumOrientations, ...
+        @(x) isnumeric(x) && isscalar(x) && isfinite(x) && x >= 1 && round(x) == x);
+    addParameter(p, 'ScalarBeamformer', defaultScalar, ...
+        @(x) isscalar(x) && (islogical(x) || ...
+        (isnumeric(x) && isfinite(x) && (x == 0 || x == 1))));
 
     parse(p, Data, L, varargin{:});
 
     Param_LCMV.OptionsPassed = p.Results;
     Data_orig = p.Results.Data;
     L_orig = p.Results.L;
-    bf_type = lower(p.Results.Type);
+    bf_type = lower(char(p.Results.Type));
     C_y = p.Results.DataCovariance;
     C_noise = p.Results.NoiseCovariance;
     lambda = p.Results.RegularizationParameter;
     nd = p.Results.NumOrientations;
-    use_scalar = p.Results.ScalarBeamformer;
+    use_scalar = logical(p.Results.ScalarBeamformer);
+
+    if ~ismember(bf_type, {'ug', 'ua', 'ung'})
+        error('seal_LCMV:UnknownType', 'Unknown LCMV Type.');
+    end
 
     [Nchannels_L, Nsources_total] = size(L_orig);
     Nchannels = Nchannels_L;
@@ -70,7 +78,21 @@ function [Source_LCMV, Param_LCMV] = seal_LCMV(Data, L, varargin)
     if ~isempty(Data_orig) && size(Data_orig, 1) ~= Nchannels
         error('seal_LCMV:DimensionMismatch', 'Data and L must have same number of channels.');
     end
+    if mod(Nsources_total, nd) ~= 0
+        error('seal_LCMV:NumOrientationsMismatch', ...
+            'Total sources in L (%d) must be divisible by NumOrientations (%d).', ...
+            Nsources_total, nd);
+    end
+
     if isempty(C_noise), C_noise = eye(Nchannels); end
+    if ~isequal(size(C_noise), [Nchannels, Nchannels])
+        error('seal_LCMV:NoiseCovarianceDimensionMismatch', ...
+            'NoiseCovariance must be %d x %d.', Nchannels, Nchannels);
+    end
+    if ~isempty(C_y) && ~isequal(size(C_y), [Nchannels, Nchannels])
+        error('seal_LCMV:DataCovarianceDimensionMismatch', ...
+            'DataCovariance must be %d x %d.', Nchannels, Nchannels);
+    end
     
     Nsources_locations = Nsources_total / nd;
 
@@ -78,11 +100,21 @@ function [Source_LCMV, Param_LCMV] = seal_LCMV(Data, L, varargin)
     iW = eye(Nchannels); 
     if ~isequal(C_noise, eye(Nchannels))
         try  
-            [U_c, S_c, ~] = svd((C_noise + C_noise')/2);
-            s_c = diag(S_c);
-            quan_c = mean(s_c)*1e-6;
-            s_c(s_c < quan_c) = quan_c; % Robust thresholding
-            iW = diag(1./sqrt(s_c)) * U_c';
+            C_noise = (double(C_noise) + double(C_noise)') / 2;
+            if any(~isfinite(C_noise(:)))
+                error('Noise covariance contains non-finite values.');
+            end
+            [U_c, D_c] = eig(C_noise);
+            s_c = real(diag(D_c));
+            [s_c, sortIdx] = sort(s_c, 'descend');
+            U_c = real(U_c(:, sortIdx));
+            sMax = max(s_c);
+            if isempty(sMax) || ~isfinite(sMax) || sMax <= 0
+                error('Noise covariance has no positive eigenvalues.');
+            end
+            eigFloor = sMax * 1e-6;
+            s_c(s_c < eigFloor) = eigFloor;
+            iW = diag(1 ./ sqrt(s_c)) * U_c';
         catch ME_whitening
             warning('seal_LCMV:WhiteningFailed', 'Whitening failed. Using identity. Error: %s', ME_whitening.message);
             iW = eye(Nchannels);
@@ -106,22 +138,31 @@ function [Source_LCMV, Param_LCMV] = seal_LCMV(Data, L, varargin)
         % Compute directly from whitened data
         Ntimepoints = size(Data_w, 2);
         Data_mean_sub = bsxfun(@minus, Data_w, mean(Data_w, 2));
-        C_y_w = (Data_mean_sub * Data_mean_sub') / (Ntimepoints - 1);
+        C_y_w = (Data_mean_sub * Data_mean_sub') / max(Ntimepoints - 1, 1);
     else
         % Whiten the user-provided data covariance: C_yw = iW * Cy * iW^T
+        if any(~isfinite(C_y(:)))
+            error('seal_LCMV:InvalidDataCovariance', ...
+                'DataCovariance contains non-finite values.');
+        end
+        C_y = (double(C_y) + double(C_y)') / 2;
         C_y_w = iW * C_y * iW';
     end
     
     % Ensure symmetry and apply Tikhonov regularization (Shrinkage)
     C_y_w = (C_y_w + C_y_w') / 2;
-    C_reg = C_y_w + lambda * (trace(C_y_w) / Nchannels) * eye(Nchannels);
+    covScale = trace(C_y_w) / Nchannels;
+    if ~isfinite(covScale) || covScale <= 0
+        covScale = max(norm(C_y_w, 'fro') / Nchannels, eps);
+    end
+    C_reg = C_y_w + lambda * covScale * eye(Nchannels);
     Param_LCMV.DataCovariance = C_reg;
 
     % Inverse Covariance
     if rcond(C_reg) < 1e-12
         invC = pinv(C_reg);
     else
-        invC = inv(C_reg);
+        invC = C_reg \ eye(Nchannels);
     end
 
     %% 4. Compute Beamformer Weights (in Whitened Space)
@@ -162,6 +203,7 @@ function [Source_LCMV, Param_LCMV] = seal_LCMV(Data, L, varargin)
                 
             case 'ua' % Unit Array
                 norm_factors = sqrt(sum(L_k.^2, 1));
+                norm_factors(norm_factors < eps) = eps;
                 fnt = bsxfun(@rdivide, L_k, norm_factors);
                 Term_inv = pinv(fnt' * invC * fnt);
                 ft = Term_inv * (fnt' * invC);
@@ -171,6 +213,7 @@ function [Source_LCMV, Param_LCMV] = seal_LCMV(Data, L, varargin)
                 w_ug = Term_inv * (L_k' * invC); 
                 % Because space is whitened, noise is I, so gamma is just sum(w_ug.^2)
                 gamma_diag = sum(w_ug.^2, 2); 
+                gamma_diag(gamma_diag < eps) = eps;
                 ft = bsxfun(@times, w_ug, 1./sqrt(gamma_diag));
                 
             otherwise

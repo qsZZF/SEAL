@@ -13,9 +13,16 @@ function [Source_sLORETA, Param_sLORETA] = seal_sLORETA(Data, L, varargin)
 %
 %   Optional Name-Value Pair Inputs:
 %       'RegularizationParameter' (double or char/string): For the base MNE.
-%                                           Default: 0.1.
+%                                           Default: 1/3, matching Brainstorm's
+%                                           fixed SNR=3 convention for the
+%                                           scaled SEAL MNE parameter.
 %       'NoiseCovariance' (double matrix): Noise covariance (C). Default: eye(Nchannels).
 %       'NumOrientations' (integer): Number of orientations per source location. Default: 1.
+%       'SourceCovariance' (double matrix or char/string): Optional base MNE
+%                                           source covariance. Default: identity.
+%                                           Brainstorm disables depth weighting
+%                                           for sLORETA, so the GUI does not pass
+%                                           depth_weighted here.
 %       % Other parameters accepted by seal_MNE can be passed.
 %
 %   Outputs:
@@ -36,7 +43,7 @@ function [Source_sLORETA, Param_sLORETA] = seal_sLORETA(Data, L, varargin)
     p.CaseSensitive = false;
     p.KeepUnmatched = true; % Pass remaining to seal_MNE
 
-    defaultRegParam_sLORETA = 0.1;
+    defaultRegParam_sLORETA = 1/3;
     if size(L,1) > 0
         defaultNoiseCov_sLORETA = eye(size(L, 1));
     else
@@ -50,6 +57,7 @@ function [Source_sLORETA, Param_sLORETA] = seal_sLORETA(Data, L, varargin)
     addParameter(p, 'RegularizationParameter', defaultRegParam_sLORETA);
     addParameter(p, 'NoiseCovariance', defaultNoiseCov_sLORETA, @(x) (isnumeric(x) && ismatrix(x)) || isempty(x));
     addParameter(p, 'NumOrientations', defaultNumOrientations_sLORETA, @(x) isnumeric(x) && isscalar(x) && x>=1);
+    addParameter(p, 'SourceCovariance', [], @(x) isempty(x) || isnumeric(x) || ischar(x) || isstring(x));
 
     try
         parse(p, Data, L, varargin{:});
@@ -67,7 +75,12 @@ function [Source_sLORETA, Param_sLORETA] = seal_sLORETA(Data, L, varargin)
     end
     
     Nsources_total = size(L, 2);
-    mneOpts = {'SourceCovariance', eye(Nsources_total), ... % sLORETA base MNE uses identity Rs
+    sourceCovariance = p.Results.SourceCovariance;
+    if isempty(sourceCovariance)
+        sourceCovariance = eye(Nsources_total);
+    end
+
+    mneOpts = {'SourceCovariance', sourceCovariance, ...
                'RegularizationParameter', p.Results.RegularizationParameter, ...
                'NoiseCovariance', current_NoiseCov, ...
                'NumOrientations', p.Results.NumOrientations};
@@ -107,24 +120,19 @@ function [Source_sLORETA, Param_sLORETA] = seal_sLORETA(Data, L, varargin)
             
             R_block = M_w_block * L_w_block; % nd x nd, diagonal block of resolution matrix M_w_mne * L_w'
             
-            % Robust sqrtm(pinv(R_block))
-            R_block_sym = (R_block + R_block')/2; 
-            [V_r, D_r_mat] = eig(R_block_sym);
-            d_r_vec = diag(D_r_mat);
-            
-            % For pinv(R_block)
-            d_pinv_r = zeros(size(d_r_vec));
-            valid_eig_r = abs(d_r_vec) > (nd * eps(max(abs(d_r_vec))));
-            d_pinv_r(valid_eig_r) = 1./d_r_vec(valid_eig_r);
-            pinv_R_block = V_r * diag(d_pinv_r) * V_r';
-            
-            % For sqrtm(pinv_R_block)
-            pinv_R_block_sym = (pinv_R_block + pinv_R_block')/2;
-            [V_pr, D_pr_mat] = eig(pinv_R_block_sym);
-            d_pr_vec = diag(D_pr_mat);
-            d_pr_vec(d_pr_vec < 0) = 0; % Floor negative eigenvalues before sqrt
-            
-            norm_matrix_loc = V_pr * diag(sqrt(d_pr_vec)) * V_pr';
+            [Ur, Sr, Vr] = svd(R_block);
+            sr = diag(Sr);
+            if isempty(sr) || sr(1) == 0
+                rnk = 0;
+            else
+                rnk = sum(sr > (length(sr) * eps(single(sr(1)))));
+            end
+
+            if rnk > 0
+                norm_matrix_loc = Vr(:, 1:rnk) * diag(1 ./ sqrt(sr(1:rnk))) * Ur(:, 1:rnk)';
+            else
+                norm_matrix_loc = zeros(nd);
+            end
             normalizationMatricesCell{i_loc} = norm_matrix_loc;
             
             M_w_normalized_rows(idx, :) = norm_matrix_loc * M_w_block;

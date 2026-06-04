@@ -49,6 +49,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         RRButton                        matlab.ui.control.Button
         RButton                         matlab.ui.control.Button
         LButton                         matlab.ui.control.Button
+        RemoveDCCheckBox                matlab.ui.control.CheckBox
         SelectedTimeEditField           matlab.ui.control.NumericEditField
         SelectedTimeEditField_2Label_2  matlab.ui.control.Label
         StackingmodeButton              matlab.ui.control.StateButton
@@ -114,8 +115,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         ClickHoldTimer            % 单次定时器：判断是否进入框选
         MouseDownTic uint64 = uint64(0);%记录按下时刻（tic）
         MouseDownPoint double = []% 记录按下时坐标 [x y]
-
-        AutoScaleFactor = []   % 基于整段数据一次性算好的自动缩放系数
+        TimeVector = []
     end
 
     properties (Access = public)
@@ -131,6 +131,122 @@ classdef SEAL_showEEG < matlab.apps.AppBase
     end
 
     methods (Access = private)
+
+        function timeVector = loadTimeVector(app, dataNode, nTime)
+            timeVector = [];
+            try
+                if ~isempty(dataNode) && ~isempty(dataNode.dataInfo) && isprop(dataNode.dataInfo, 'metadata') && ...
+                        isfield(dataNode.dataInfo.metadata, 'timeVector')
+                    candidate = double(dataNode.dataInfo.metadata.timeVector(:))';
+                    if numel(candidate) == nTime
+                        timeVector = candidate;
+                        return;
+                    end
+                end
+            catch
+                timeVector = [];
+            end
+
+            try
+                dataPath = string(dataNode.dataInfo.dataPath);
+                if strlength(dataPath) > 0 && isfile(dataPath)
+                    vars = whos('-file', char(dataPath));
+                    names = {vars.name};
+                    if any(strcmp(names, 'Time'))
+                        tmp = load(char(dataPath), 'Time', '-mat');
+                        candidate = double(tmp.Time(:))';
+                        if numel(candidate) == nTime
+                            timeVector = candidate;
+                            return;
+                        end
+                    end
+                end
+            catch
+                timeVector = [];
+            end
+
+            timeVector = (0:nTime-1) ./ app.srate;
+        end
+
+        function idx = timeToSampleIndex(app, t)
+            if ~isempty(app.TimeVector) && numel(app.TimeVector) == app.frames
+                [~, idx] = min(abs(app.TimeVector - t));
+            else
+                idx = round(t * app.srate) + 1;
+            end
+            idx = max(1, min(idx, app.frames));
+        end
+
+        function bounds = timeBounds(app)
+            if ~isempty(app.TimeVector) && numel(app.TimeVector) == app.frames
+                bounds = [app.TimeVector(1), app.TimeVector(end)];
+            else
+                bounds = [0, (app.frames - 1) / app.srate];
+            end
+        end
+
+        function selectedTime = snapTimeToSample(app, targetTime)
+            if isempty(targetTime) || ~isnumeric(targetTime) || ~isscalar(targetTime) || ~isfinite(targetTime)
+                targetTime = app.SelectedTime;
+            end
+            if isempty(targetTime) || ~isfinite(targetTime)
+                targetTime = app.time;
+            end
+
+            idx = app.timeToSampleIndex(targetTime);
+            if ~isempty(app.TimeVector) && numel(app.TimeVector) == app.frames
+                selectedTime = app.TimeVector(idx);
+            else
+                selectedTime = (idx - 1) / app.srate;
+            end
+        end
+
+        function selectSingleTime(app, targetTime, ensureVisible)
+            if nargin < 3
+                ensureVisible = false;
+            end
+
+            selectedTime = app.snapTimeToSample(targetTime);
+            bounds = app.timeBounds();
+            selectedTime = max(bounds(1), min(selectedTime, bounds(2)));
+
+            app.SelectedTimeRange = [];
+            app.SelectedTime = selectedTime;
+            try
+                app.rangestart.Text = '';
+                app.rangeend.Text = '';
+            catch
+            end
+
+            if ishandle(app.SelectionRectangle)
+                delete(app.SelectionRectangle);
+            end
+
+            if ensureVisible
+                visibleRange = [app.time, app.time + app.winlength];
+                if selectedTime < visibleRange(1) || selectedTime > visibleRange(2)
+                    maxStart = max(bounds(1), bounds(2) - app.winlength);
+                    newStart = selectedTime - app.winlength / 2;
+                    app.time = max(bounds(1), min(newStart, maxStart));
+                    app.redrawPlot();
+                end
+            end
+
+            app.drawTimeSelectionLine();
+            drawnow;
+        end
+
+        function setSelectedTimeEditValue(app)
+            displayTime = round(app.SelectedTime, 3);
+            try
+                if isprop(app.SelectedTimeEditField, 'ValueDisplayFormat')
+                    app.SelectedTimeEditField.ValueDisplayFormat = '%.3f';
+                end
+                app.SelectedTimeEditField.Value = displayTime;
+            catch
+                app.SelectedTimeEditField.Value = displayTime;
+            end
+        end
 
         function redrawPlot(app)
             % 绑定到 UIAxes，清空现有内容
@@ -174,8 +290,13 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         end
 
         function [lowlim, highlim] = calcWindowRange(app)   %计算点数的上下限
-            lowlim = round(app.time*app.srate  + 1);
-            highlim = round(min((app.time + app.winlength)*app.srate  + 1, app.frames));
+            lowlim = app.timeToSampleIndex(app.time);
+            highlim = app.timeToSampleIndex(app.time + app.winlength);
+            if highlim < lowlim
+                tmp = lowlim;
+                lowlim = highlim;
+                highlim = tmp;
+            end
         end
 
         function initializeChannelLabels(app)
@@ -210,13 +331,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         end
 
         function plotEEGChannels(app, lowlim, highlim)
-            data = app.eegdata;
-            dataRange = max(abs(data(:)));
-            if dataRange < 1e-3
-                data = data * 1e6;
-            elseif dataRange < 1
-                data = data * 1e3;
-            end
+            data = app.getDisplayUnitData(app.eegdata);
 
             % ====== 决定可用通道索引 ======
             if isempty(app.CheckedData)
@@ -253,13 +368,18 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             oldspacing = 580/app.dispchans;
             if app.duidie==1, app.spacing = oldspacing; else, app.spacing = 0; end
 
-            app.timeStart = (lowlim - 1) / app.srate;
-            app.timeEnd   = (highlim - 1) / app.srate;
-            timePoints = linspace(app.timeStart, app.timeEnd, highlim - lowlim + 1);
+            if ~isempty(app.TimeVector) && numel(app.TimeVector) == app.frames
+                app.timeStart = app.TimeVector(lowlim);
+                app.timeEnd   = app.TimeVector(highlim);
+                timePoints = app.TimeVector(lowlim:highlim);
+            else
+                app.timeStart = (lowlim - 1) / app.srate;
+                app.timeEnd   = (highlim - 1) / app.srate;
+                timePoints = linspace(app.timeStart, app.timeEnd, highlim - lowlim + 1);
+            end
 
             winDataVis = data(visRange, lowlim:highlim) - meandata(visRange);
             [winDataVisScaled, ~] = app.applyChannelScaling(winDataVis, app.ScaleFactor);
-            [winDataVisRef,    ~] = app.applyChannelScaling(winDataVis, 0);
 
             app.LineHandles = gobjects(app.dispchans,1);
             app.TextHandles = gobjects(app.dispchans,1);
@@ -289,7 +409,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             end
 
             app.spacing = oldspacing;
-            app.adjustUIAxes(lowlim, highlim, winDataVisRef);
+            app.adjustUIAxes(lowlim, highlim, winDataVisScaled);
             app.OriginalYLim2 = app.UIAxes.YLim;
             app.drawEventMarkers();
 
@@ -484,9 +604,9 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             end
             app.TimeSelectionLine = line(app.UIAxes, [app.SelectedTime, app.SelectedTime], app.OriginalYLim2, ...
                 'Color', 'r', 'LineWidth', 1.5);
-            app.SelectedTimeEditField.Value=app.SelectedTime;
+            app.setSelectedTimeEditValue();
 
-            timepoint=round(app.SelectedTime*app.srate) + 1;
+            timepoint = app.timeToSampleIndex(app.SelectedTime);
 
             if timepoint>app.datapoints
                 return
@@ -572,13 +692,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             if ~app.IsSelecting && dt < 0.3
                 cp = app.UIAxes.CurrentPoint;
                 x = cp(1,1);
-                app.SelectedTime = x;
-                if ishandle(app.TimeSelectionLine)
-                    delete(app.TimeSelectionLine);
-                end
-                app.TimeSelectionLine = line(app.UIAxes, [x x], app.UIAxes.YLim, ...
-                    'Color','r','LineWidth',1.5);
-                app.SelectedTimeEditField.Value = app.SelectedTime;
+                app.selectSingleTime(x, false);
             elseif app.IsSelecting
                 startTime = min(app.SelectionStart, app.SelectionEnd);
                 endTime   = max(app.SelectionStart, app.SelectionEnd);
@@ -621,8 +735,8 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                 app.rangeend.Text=sprintf('%.4f s', endTime);
                 app.SelectedTimeEditField.Value = 0;
             end
-            starttimepoint=round(startTime*app.srate)+1;
-            endtimepoint=round(endTime*app.srate)+1;
+            starttimepoint = app.timeToSampleIndex(startTime);
+            endtimepoint = app.timeToSampleIndex(endTime);
             if starttimepoint>app.datapoints||endtimepoint>app.datapoints
                 return
             end
@@ -691,7 +805,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
 
             newXLim = cp(1) + [-xRatio, (1-xRatio)] * xRange * zoomFactor;
             newYLim = cp(2) + [-yRatio, (1-yRatio)] * yRange * zoomFactor;
-            newXLim = app.constrainRange(newXLim, [0, app.timeEnd]);
+            newXLim = app.constrainRange(newXLim, app.timeBounds());
             newYLim = app.constrainRange(newYLim, app.OriginalYLim2);
 
             app.UIAxes.XLim = newXLim;
@@ -729,7 +843,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                 minData = data(:, lowlim:highlim);
                 meandata = mean(minData, 2);
             else
-                meandata = zeros(app.chans, 1);
+                meandata = zeros(size(data, 1), 1);
             end
         end
 
@@ -855,10 +969,19 @@ classdef SEAL_showEEG < matlab.apps.AppBase
 
         function target = getTargetAmplitude(app)
             if isempty(app.ScaleTarget)
-                s = max(app.spacing, 580/app.dispchans);
+                s = 580 / max(app.dispchans, 1);
                 target = 0.35 * s;
             else
                 target = app.ScaleTarget;
+            end
+        end
+
+        function data = getDisplayUnitData(~, data)
+            dataRange = max(abs(data(:)));
+            if dataRange < 1e-3
+                data = data * 1e6;
+            elseif dataRange < 1
+                data = data * 1e3;
             end
         end
 
@@ -908,14 +1031,17 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                     scaleInfo = fVec;
 
                 case 'global'
-                    if ~isempty(app.AutoScaleFactor)
-                        base = app.AutoScaleFactor;
+                    % Auto gain is estimated from the current visible,
+                    % already baseline-corrected window, while keeping one
+                    % shared gain for all visible channels.
+                    allData = winData(isfinite(winData));
+                    if isempty(allData)
+                        base = 1;
                     else
-                        allData = winData(:);
                         lo = prctile(allData, app.ScalePercentiles(1));
                         hi = prctile(allData, app.ScalePercentiles(2));
                         h  = (hi - lo) / 2;
-                        if h == 0, h = 1; end
+                        if ~isfinite(h) || h == 0, h = 1; end
                         base = target / h;
                     end
                     fScalar = base * rel;
@@ -1031,17 +1157,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                 app.SelectedTime = app.time;
             end
 
-            newTime = app.SelectedTime + delta;
-
-            if newTime < 0
-                newTime = 0;
-            elseif newTime > app.frames/app.srate
-                newTime = app.frames/app.srate;
-            end
-
-            app.SelectedTime = newTime;
-
-            app.drawTimeSelectionLine();
+            app.selectSingleTime(app.SelectedTime + delta, true);
         end
 
         function beginDragSelect(app)
@@ -1060,46 +1176,6 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                 [x0 x0 x0 x0], [yLimits(1) yLimits(1) yLimits(2) yLimits(2)], ...
                 'r', 'EdgeColor','r', 'LineWidth',1, 'LineStyle','--', 'FaceColor','none');
         end
-
-
-        function computeAutoScaleFactor(app)
-            data = app.eegdata;
-            dataRange = max(abs(data(:)));
-            if dataRange < 1e-3
-                data = data * 1e6;
-            elseif dataRange < 1
-                data = data * 1e3;
-            end
-
-            target = app.getTargetAmplitude();
-            switch lower(app.ScaleMode)
-                case 'none'
-                    f = 1;
-                case 'std'
-                    s = std(data, 0, 2); s(s==0) = 1;
-                    f = target ./ s;
-                case 'minmax'
-                    rng = (max(data,[],2) - min(data,[],2))/2;  rng(rng==0)=1;
-                    f = target ./ rng;
-                case 'percentile'
-                    lo = prctile(data, app.ScalePercentiles(1), 2);
-                    hi = prctile(data, app.ScalePercentiles(2), 2);
-                    h = (hi-lo)/2; h(h==0)=1;
-                    f = target ./ h;
-                case 'zscore'
-                    s = std(data,0,2); s(s==0)=1;
-                    f = target ./ s;
-                case 'global'
-                    lo = prctile(data(:), app.ScalePercentiles(1));
-                    hi = prctile(data(:), app.ScalePercentiles(2));
-                    h = (hi-lo)/2; if h==0, h=1; end
-                    f = target / h;
-                otherwise
-                    f = 1;
-            end
-            app.AutoScaleFactor = f;
-        end
-
 
         function importEEGLABEvents(app, eventStruct)
             if isempty(eventStruct) || ~isfield(eventStruct,'latency') || ~isfield(eventStruct,'type')
@@ -1131,7 +1207,12 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                     end
                 end
 
-                latSec = (double(lat) - 1) / app.srate;
+                sampleIdx = max(1, min(round(double(lat)), app.frames));
+                if ~isempty(app.TimeVector) && numel(app.TimeVector) == app.frames
+                    latSec = app.TimeVector(sampleIdx);
+                else
+                    latSec = (double(lat) - 1) / app.srate;
+                end
 
                 t = eventStruct(i).type;
                 if isnumeric(t)
@@ -1178,11 +1259,13 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         function jumpToTime(app, targetTime, rangeEnd)
             if nargin < 3, rangeEnd = []; end
 
-            maxTime = app.frames / app.srate;
-            targetTime = max(0, min(targetTime, maxTime));
+            bounds = app.timeBounds();
+            minTime = bounds(1);
+            maxTime = bounds(2);
+            targetTime = max(minTime, min(targetTime, maxTime));
 
             if ~isempty(rangeEnd) && rangeEnd > targetTime
-                rangeEnd  = max(0, min(rangeEnd, maxTime));
+                rangeEnd  = max(minTime, min(rangeEnd, maxTime));
                 app.winlength = rangeEnd - targetTime;
                 app.WinlenthEditField.Value = app.winlength;
                 app.time = targetTime;
@@ -1190,11 +1273,33 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                 app.redrawPlot();
             else
                 newStart = targetTime - app.winlength/2;
-                newStart = max(0, min(newStart, max(0, maxTime - app.winlength)));
+                newStart = max(minTime, min(newStart, max(minTime, maxTime - app.winlength)));
                 app.time = newStart;
-                app.SelectedTime = targetTime;
                 app.redrawPlot();
-                app.drawTimeSelectionLine();
+                app.selectSingleTime(targetTime, false);
+            end
+        end
+
+        function SelectedTimeEditFieldValueChanged(app, event)
+            targetTime = app.SelectedTimeEditField.Value;
+            if nargin >= 2
+                try
+                    if isprop(event, 'Value')
+                        targetTime = event.Value;
+                    end
+                catch
+                end
+            end
+            app.selectSingleTime(targetTime, true);
+        end
+
+        function installSelectedTimeCallback(app)
+            app.SelectedTimeEditField.ValueChangedFcn = @(src, evt) app.SelectedTimeEditFieldValueChanged(evt);
+            try
+                if isprop(app.SelectedTimeEditField, 'ValueChangingFcn')
+                    app.SelectedTimeEditField.ValueChangingFcn = @(src, evt) app.SelectedTimeEditFieldValueChanged(evt);
+                end
+            catch
             end
         end
 
@@ -1254,7 +1359,6 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                 filtered(ch,:)= filtfilt(firCoeff, 1, double(app.eegdata(ch,:)));
             end
 
-            app.computeAutoScaleFactor();
             app.redrawPlot();
 
             app.visualizeFilterResponse(firCoeff, app.srate, paramStr, cutoffs);
@@ -1353,6 +1457,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                 app.UIFigure.Position(1) = screenSize(3) * 0.4;
                 app.UIFigure.Position(2) = screenSize(3) * 0.3;
             end
+            app.installSelectedTimeCallback();
 
             app.dataNode = dataNode;
             app.SavePath=dataNode.parent.parent.path;
@@ -1370,10 +1475,12 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             app.chans     = size(app.eegdata, 1);
             app.frames    = size(app.eegdata, 2);
             app.datapoints = app.frames;
-            app.time      = 0;
-            app.winlength = min(app.frames / app.srate, 10);
-            app.timeStart = 0;
-            app.timeEnd   = app.winlength;
+            app.TimeVector = app.loadTimeVector(dataNode, app.frames);
+            app.time      = app.TimeVector(1);
+            fullDuration = app.TimeVector(end) - app.TimeVector(1);
+            app.winlength = min(fullDuration, 10);
+            app.timeStart = app.TimeVector(1);
+            app.timeEnd   = app.TimeVector(end);
 
 
             if ~isempty(dataNode.dataInfo.chanlocs)
@@ -1427,20 +1534,21 @@ classdef SEAL_showEEG < matlab.apps.AppBase
 
             app.WinlenthEditField.Value=app.UIAxes.XLim(2)-app.UIAxes.XLim(1);
             app.winlength= app.WinlenthEditField.Value;
-
-            app.computeAutoScaleFactor();
         end
 
         % Button pushed function: LLButton
         function LLButtonPushed(app, event)
             step = app.winlength ;
-            app.time =max(0, app.time - step);
+            bounds = app.timeBounds();
+            app.time = max(bounds(1), app.time - step);
             app.redrawPlot;
         end
 
         % Button pushed function: smallerButton
         function smallerButtonPushed(app, event)
-            if app.winlength==app.frames/app.srate
+            bounds = app.timeBounds();
+            fullDuration = bounds(2) - bounds(1);
+            if app.winlength==fullDuration
                 app.winlength=fix(app.winlength*10)/10;
                 app.WinlenthEditField.Value = app.winlength;
                 app.redrawPlot;
@@ -1458,8 +1566,9 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         % Button pushed function: RRButton
         function RRButtonPushed(app, event)
             step = app.winlength ;
+            bounds = app.timeBounds();
             rightbountry = app.time + step;
-            rightbountry = min(app.frames/app.srate,rightbountry+step);
+            rightbountry = min(bounds(2),rightbountry+step);
             app.time = rightbountry - step;
 
             app.redrawPlot;
@@ -1468,11 +1577,13 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         % Button pushed function: biggerButton
         function biggerButtonPushed(app, event)
             app.winlength=app.winlength+0.1;
-            if app.winlength<app.frames/app.srate
+            bounds = app.timeBounds();
+            fullDuration = bounds(2) - bounds(1);
+            if app.winlength<fullDuration
                 app.WinlenthEditField.Value = app.winlength;
                 app.redrawPlot;
             else
-                app.winlength=app.frames/app.srate;
+                app.winlength=fullDuration;
                 app.WinlenthEditField.Value = app.winlength;
                 app.redrawPlot;
             end
@@ -1481,8 +1592,9 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         % Button pushed function: RButton
         function RButtonPushed(app, event)
             step = app.winlength/2 ;
+            bounds = app.timeBounds();
             rightbountry = app.time + step;
-            rightbountry = min(app.frames/app.srate,rightbountry+step);
+            rightbountry = min(bounds(2),rightbountry+step);
             app.time = rightbountry - step;
 
             app.redrawPlot;
@@ -1491,7 +1603,8 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         % Button pushed function: LButton
         function LButtonPushed(app, event)
             step = app.winlength/2 ;
-            app.time = max(0, app.time - step);
+            bounds = app.timeBounds();
+            app.time = max(bounds(1), app.time - step);
 
             app.redrawPlot;
         end
@@ -1501,10 +1614,12 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             eventTimeSec = app.SelectedTimeEditField.Value;
             eventLabel   = strtrim(app.EventLabelEditField.Value);
 
-            maxT = (app.frames - 1) / app.srate;
-            if eventTimeSec < 0 || eventTimeSec > maxT
+            bounds = app.timeBounds();
+            minT = bounds(1);
+            maxT = bounds(2);
+            if eventTimeSec < minT || eventTimeSec > maxT
                 uialert(app.UIFigure, ...
-                    sprintf('Latency %.3fs 超出数据范围 [0, %.3f]s', eventTimeSec, maxT), ...
+                    sprintf('Latency %.3fs 超出数据范围 [%.3f, %.3f]s', eventTimeSec, minT, maxT), ...
                     'Invalid latency');
                 return;
             end
@@ -1516,7 +1631,7 @@ classdef SEAL_showEEG < matlab.apps.AppBase
 
             epNum = [];
             if ~isempty(app.TrialIndices) && isfield(app.TrialIndices,'points_per_trial')
-                sampleIdx = round(eventTimeSec * app.srate) + 1;
+                sampleIdx = app.timeToSampleIndex(eventTimeSec);
                 nPts = app.TrialIndices(1).points_per_trial;
                 epCandidate = ceil(sampleIdx / nPts);
                 if epCandidate >= 1 && epCandidate <= numel(app.TrialIndices)
@@ -1562,6 +1677,17 @@ classdef SEAL_showEEG < matlab.apps.AppBase
                 app.duidie=1;
                 app.redrawPlot();
             end
+        end
+
+        % Value changed function: RemoveDCCheckBox
+        function RemoveDCCheckBoxValueChanged(app, ~)
+            if app.RemoveDCCheckBox.Value
+                app.submean = 'on';
+            else
+                app.submean = 'off';
+            end
+
+            app.redrawPlot();
         end
 
         % Callback function: ChannelTree
@@ -1776,10 +1902,12 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         % Value changed function: WinlenthEditField
         function WinlenthEditFieldValueChanged(app, event)
             app.winlength = app.WinlenthEditField.Value;
-            if app.winlength<app.frames/app.srate
+            bounds = app.timeBounds();
+            fullDuration = bounds(2) - bounds(1);
+            if app.winlength<fullDuration
                 app.redrawPlot;
             else
-                app.winlength=app.frames/app.srate;
+                app.winlength=fullDuration;
                 app.WinlenthEditField.Value = app.winlength;
                 app.redrawPlot;
             end
@@ -1789,9 +1917,6 @@ classdef SEAL_showEEG < matlab.apps.AppBase
         function ScaleEditFieldValueChanged(app, event)
             value = app.ScaleEditField.Value;
             app.ScaleFactor = value;
-            if app.ScaleFactor == 0
-                app.computeAutoScaleFactor();
-            end
             app.redrawPlot();
         end
 
@@ -1800,9 +1925,9 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             if isobject(app.dataNode)
                 evtToSave = app.EventMarkers;
                 for i = 1:numel(evtToSave)
-                    evtToSave(i).latency  = evtToSave(i).latency  * app.srate + 1;
+                    evtToSave(i).latency = app.timeToSampleIndex(evtToSave(i).latency);
                     if isfield(evtToSave, 'duration') && ~isempty(evtToSave(i).duration)
-                        evtToSave(i).duration = evtToSave(i).duration * app.srate;
+                        evtToSave(i).duration = round(evtToSave(i).duration * app.srate);
                     end
                 end
                 app.dataNode.dataInfo.event = evtToSave;
@@ -1987,12 +2112,31 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             app.ControlGrid.ColumnSpacing = 6;
             app.ControlGrid.Padding       = [6 6 6 6];
 
-            % --- 7.1 Stacking 按钮 ---
-            app.StackingmodeButton = uibutton(app.ControlGrid, 'state');
+            % --- 7.1 显示选项 ---
+            displayOptionsGrid = uigridlayout(app.ControlGrid);
+            displayOptionsGrid.ColumnWidth = {'1x'};
+            displayOptionsGrid.RowHeight   = {28, 22};
+            displayOptionsGrid.RowSpacing  = 4;
+            displayOptionsGrid.Padding     = [0 0 0 0];
+            displayOptionsGrid.Layout.Row    = 1;
+            displayOptionsGrid.Layout.Column = 1;
+
+            app.StackingmodeButton = uibutton(displayOptionsGrid, 'state');
             app.StackingmodeButton.ValueChangedFcn = createCallbackFcn(app, @StackingmodeButtonValueChanged, true);
             app.StackingmodeButton.Text = 'Stacking mode';
             app.StackingmodeButton.Layout.Row    = 1;
             app.StackingmodeButton.Layout.Column = 1;
+
+            app.RemoveDCCheckBox = uicheckbox(displayOptionsGrid);
+            app.RemoveDCCheckBox.ValueChangedFcn = createCallbackFcn(app, @RemoveDCCheckBoxValueChanged, true);
+            app.RemoveDCCheckBox.Text = 'Remove DC';
+            app.RemoveDCCheckBox.Value = strcmpi(app.submean, 'on');
+            try
+                app.RemoveDCCheckBox.Tooltip = 'Subtract each channel mean in the current visible window before display scaling.';
+            catch
+            end
+            app.RemoveDCCheckBox.Layout.Row    = 2;
+            app.RemoveDCCheckBox.Layout.Column = 1;
 
             % --- 7.2 选中时间 + 范围显示 ---
             app.SelectionGrid = uigridlayout(app.ControlGrid);
@@ -2011,6 +2155,19 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             app.SelectedTimeEditField_2Label_2.Layout.Column = 1;
 
             app.SelectedTimeEditField = uieditfield(app.SelectionGrid, 'numeric');
+            try
+                if isprop(app.SelectedTimeEditField, 'ValueDisplayFormat')
+                    app.SelectedTimeEditField.ValueDisplayFormat = '%.3f';
+                end
+            catch
+            end
+            app.SelectedTimeEditField.ValueChangedFcn = @(src, evt) app.SelectedTimeEditFieldValueChanged(evt);
+            try
+                if isprop(app.SelectedTimeEditField, 'ValueChangingFcn')
+                    app.SelectedTimeEditField.ValueChangingFcn = @(src, evt) app.SelectedTimeEditFieldValueChanged(evt);
+                end
+            catch
+            end
             app.SelectedTimeEditField.Layout.Row    = 1;
             app.SelectedTimeEditField.Layout.Column = 2;
 
@@ -2063,12 +2220,17 @@ classdef SEAL_showEEG < matlab.apps.AppBase
             app.WinlenthEditField.Layout.Column = 2;
 
             app.ScaleEditFieldLabel = uilabel(app.WindowGrid);
-            app.ScaleEditFieldLabel.Text = 'Scale';
+            app.ScaleEditFieldLabel.Text = 'Gain (0=Auto)';
             app.ScaleEditFieldLabel.HorizontalAlignment = 'right';
             app.ScaleEditFieldLabel.Layout.Row    = 2;
             app.ScaleEditFieldLabel.Layout.Column = 1;
 
             app.ScaleEditField = uieditfield(app.WindowGrid, 'numeric');
+            app.ScaleEditField.Value = app.ScaleFactor;
+            try
+                app.ScaleEditField.Tooltip = '0 uses automatic display gain; positive values multiply the automatic gain.';
+            catch
+            end
             app.ScaleEditField.ValueChangedFcn = createCallbackFcn(app, @ScaleEditFieldValueChanged, true);
             app.ScaleEditField.Layout.Row    = 2;
             app.ScaleEditField.Layout.Column = 2;

@@ -15,14 +15,19 @@ function [Source_MNE, Param_MNE] = seal_MNE(Data,L,varargin)
 %       'RegularizationParameter' (double or char/string): regularization value for Tikhonov regularization 
 %                                           lambda (the value used in seal_MNE is lambda^2*trace(L*L')/trace(Noise_Cov)).
 %                                           If 'auto', attempts to estimate from data.
-%                                           Default: 0.1
+%                                           Default: 1/3
 %       'SourceCovariance' (double matrix or char/string):
 %                                           - Nsources x Nsources prior source covariance matrix (R_s).
-%                                           - 'none' or 'depth_weighted'. If 'depth_weighted', computes diagonal 
-%                                             depth weighting, else use eye(Nsources). 
-%                                           Default:'depth_weighted'.
-%       'DepthWeightExp'(float): Coefficent for depth weights q, R_s_(i,i) = norm(L_(:,i),2)^q. 
+%                                           - 'none', 'depth_weighted', or 'brainstorm_depth'.
+%                                             'brainstorm_depth' follows Brainstorm/MNE depth weighting:
+%                                             alpha = sqrt(max(norm2^p) / norm2^p), capped by DepthWeightLimit.
+%                                           Default:'brainstorm_depth'.
+%       'DepthWeightExp'(float): Depth weighting exponent. Brainstorm default is 0.5.
 %                                           Default: 0.5 
+%       'DepthWeightLimit'(float): Maximum Brainstorm depth weighting factor.
+%                                           Default: 10
+%       'DepthLeadfield'(double matrix): Optional unwhitened free-orientation
+%                                           leadfield used only to compute Brainstorm depth weights.
 %       'NoiseCovariance' (double matrix): Nchannels x Nchannels noise covariance
 %                                          matrix (C). Default: eye(Nchannels).
 %       'NumOrientations' (integer): Number of orientations per source location (e.g., 1 for fixed, 3 for free).
@@ -70,17 +75,21 @@ p = inputParser;
 p.CaseSensitive = false;
 p.KeepUnmatched = false; % Set to true if you expect other params from a higher-level wrapper
 % Define default values
-defaultRegParam = 0.1;
-defaultSourceCov = 'depth_weighted'; % Default to automatic depth weighting
+defaultRegParam = 1/3;
+defaultSourceCov = 'brainstorm_depth';
 defaultNoiseCov = eye(size(L, 1));
 defaultNumOrientations = 1;
-defaultDepthWeightExp = 1;
+defaultDepthWeightExp = 0.5;
+defaultDepthWeightLimit = 10;
+defaultDepthLeadfield = [];
 
 addRequired(p, 'Data', @(x) (isnumeric(x) && ismatrix(x)) || isempty(x));
 addRequired(p, 'L', @(x) isnumeric(x) && ismatrix(x));
 
 addParameter(p, 'RegularizationParameter', defaultRegParam);
 addParameter(p, 'DepthWeightExp', defaultDepthWeightExp, @(x) isnumeric(x));
+addParameter(p, 'DepthWeightLimit', defaultDepthWeightLimit, @(x) isnumeric(x) && isscalar(x) && x > 0);
+addParameter(p, 'DepthLeadfield', defaultDepthLeadfield, @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
 addParameter(p, 'SourceCovariance', defaultSourceCov); 
 addParameter(p, 'NoiseCovariance', defaultNoiseCov, @(x) isnumeric(x) && ismatrix(x));
 addParameter(p, 'NumOrientations', defaultNumOrientations, @(x) isnumeric(x) && isscalar(x) && x>=1);
@@ -99,6 +108,8 @@ Rs_input = p.Results.SourceCovariance;
 C_noise = p.Results.NoiseCovariance;
 nd = p.Results.NumOrientations;
 DepthExp = p.Results.DepthWeightExp;
+DepthLimit = p.Results.DepthWeightLimit;
+DepthLeadfield = p.Results.DepthLeadfield;
 Param_MNE.OptionsPassed = p.Results; % Store all parsed options
 
 Nchannels = size(Data,1);
@@ -203,6 +214,56 @@ elseif ischar(Rs_input) || isstring(Rs_input)
             %   Gram = L_w * L_w' + lambda^2 I = L * Rs * L' + lambda^2 I
             %   M_w  = Rc * L_w' / Gram       = Rs^{1/2} * (L * Rs^{1/2})' / Gram
             %                                 = Rs * L' * (L * Rs * L' + lambda^2 I)^{-1}
+            L_w = L_w * Rc;
+        case 'brainstorm_depth'
+            % Brainstorm computes the depth scalar from the unwhitened
+            % leadfield norm per source point. For fixed orientation,
+            % Brainstorm still uses the corresponding 3-orientation
+            % Frobenius norm when it is available.
+            depthL = DepthLeadfield;
+            if isempty(depthL)
+                depthL = L_orig;
+            end
+            if size(depthL, 1) ~= Nchannels
+                error('seal_MNE:DepthLeadfieldDimMismatch', ...
+                    'DepthLeadfield must have the same number of channels as L.');
+            end
+
+            depthNormSq = sum(depthL.^2, 1);
+            if size(depthL, 2) == 3 * Nsources_locations
+                sourceNorms2 = sum(reshape(depthNormSq, 3, []), 1);
+            elseif size(depthL, 2) == Nsources_locations
+                sourceNorms2 = depthNormSq;
+            elseif size(depthL, 2) == Nsources_total && nd > 1
+                sourceNorms2 = sum(reshape(depthNormSq, nd, []), 1);
+            else
+                error('seal_MNE:DepthLeadfieldSourceMismatch', ...
+                    ['DepthLeadfield columns (%d) are incompatible with %d source locations ', ...
+                     'and NumOrientations=%d.'], size(depthL, 2), Nsources_locations, nd);
+            end
+
+            alpha2 = sourceNorms2 .^ DepthExp;
+            alphaMax2 = max(alpha2);
+            if alphaMax2 <= 0 || ~isfinite(alphaMax2)
+                warning('seal_MNE:InvalidDepthNorms', ...
+                    'Depth leadfield norms are invalid. Falling back to no depth weighting.');
+                alpha = ones(1, Nsources_locations);
+            else
+                alpha2 = max(alpha2, alphaMax2 ./ (DepthLimit ^ 2));
+                alpha = sqrt(alphaMax2 ./ alpha2);
+            end
+
+            if nd > 1
+                Rc = kron(sparse(diag(alpha)), speye(nd));
+                Rs = Rc * Rc';
+            else
+                Rc = sparse(diag(alpha));
+                Rs = Rc * Rc';
+            end
+            Param_MNE.DepthWeights = alpha(:);
+            Param_MNE.DepthWeightExp = DepthExp;
+            Param_MNE.DepthWeightLimit = DepthLimit;
+            Param_MNE.DepthLeadfieldSize = size(depthL);
             L_w = L_w * Rc;
         otherwise
             error('seal_MNE:InvalidSourceCovString', 'Unknown string for SourceCovariance.');
