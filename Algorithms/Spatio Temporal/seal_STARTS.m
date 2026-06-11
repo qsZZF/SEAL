@@ -29,11 +29,15 @@ function [Source_Estimate, Parameters] = seal_STARTS(Data, L, sourceSpaceInfo, v
 %       'NumOrientations' (integer): Number of orientations per source location. Default: 1.
 %       'PruneGammas' (double): Threshold for pruning spatial groups. Default: 1e-4.
 %       'PruneAlphas' (double): Threshold for pruning temporal components. Default: 1e-4.
+%       'CwkRegularization' (double): Relative diagonal loading applied to
+%                                     C_wk before linear solves. Default: 1e-10.
 %
 %   Outputs:
 %       Source_Estimate (double matrix): Nsources x Ntimepoints estimated source activity.
 %       Parameters (struct): A struct containing detailed output:
-%           .InverseOperator (matrix): The final spatial inverse operator W.
+%           .SpatialWeights_W (matrix): Final spatial weights in the factorized
+%                                       source model S = W * Phi. This is not a
+%                                       sensor-to-source inverse operator.
 %           .TemporalBasisFunctions (matrix): The learned temporal basis Phi.
 %           .LearnedGammas (vector): Final spatial hyperparameters.
 %           .LearnedAlphas (vector): Final temporal hyperparameters.
@@ -63,6 +67,7 @@ addParameter(p, 'NumOrientations', 1, @(x) isscalar(x) && ismember(x, [1, 3]));
 addParameter(p, 'PruneGammas', 1e-6, @(x) isscalar(x) && x>0);
 addParameter(p, 'PruneAlphas', 1e-1, @(x) isscalar(x) && x>0);
 addParameter(p, 'UpdateNoiseCovariance', 1, @(x) ismember(x, [0,1,2]));
+addParameter(p, 'CwkRegularization', 1e-10, @(x) isscalar(x) && x >= 0);
 
 try
     parse(p, Data, L, sourceSpaceInfo, varargin{:});
@@ -83,6 +88,7 @@ Phi = Parameters.OptionsPassed.InitialTBFs;
 numTBFs = Parameters.OptionsPassed.NumTBFs;
 prune_gamma_thr = Parameters.OptionsPassed.PruneGammas;
 prune_alpha_thr = Parameters.OptionsPassed.PruneAlphas;
+cwkReg = Parameters.OptionsPassed.CwkRegularization;
 
 %% --- Initialization ---
 [Nchannels, Nsources_total] = size(L);
@@ -93,9 +99,15 @@ if isempty(Cnoise)
     Cnoise = 1e-4 * trace(Data*Data'/Ntimepoints) * eye(Nchannels);
 end
 
+if ~isempty(Phi) && size(Phi, 2) ~= Ntimepoints
+    error('seal_STARTS:InitialTBFsDimMismatch', ...
+        'InitialTBFs must have the same number of columns as Data time points.');
+end
+
 if isempty(Phi)
     [~, ~, tD] = svd(Data, 'econ');
     Phi = tD(:, 1:min(numTBFs, size(tD, 2)))';
+    numTBFs = size(Phi, 1);
 else
     numTBFs = size(Phi, 1);
 end
@@ -193,11 +205,14 @@ for iter = 1:maxIter
     for k = 1:numW
         tIdx = setdiff(1:numW,k);
         E_PhiPhiT_k = Phi(k,:) * Phi(k,:)' + Ntimepoints*C_phi(k,k);
-        C_wk = FAF + Cnoise / E_PhiPhiT_k;
+        C_wk = stabilize_spd(FAF + Cnoise / E_PhiPhiT_k, cwkReg);
         Residual_k = Data * Phi(k,:).' - LFG * sum(W(:,tIdx).*repmat(Phi(k,:)*Phi(tIdx,:).'+Ntimepoints*C_phi(k,tIdx),size(LFG,2),1),2);               
-        W(:,k) =  repmat(1./gamma,1,Nchannels) .* LFG.' / C_wk * Residual_k / E_PhiPhiT_k;
-        diagCk(k) = trace(FAF / Cnoise - FAF / C_wk * FAF / Cnoise);
-        tr_w = tr_w + (FAF - FAF / C_wk * FAF) * E_PhiPhiT_k;
+        WeightedLFGT = repmat(1./gamma,1,Nchannels) .* LFG.';
+        WeightedLFGT_over_Cwk = right_solve_spd(WeightedLFGT, C_wk);
+        FAF_over_Cwk = right_solve_spd(FAF, C_wk);
+        W(:,k) = WeightedLFGT_over_Cwk * Residual_k / E_PhiPhiT_k;
+        diagCk(k) = trace(FAF / Cnoise - FAF_over_Cwk * FAF / Cnoise);
+        tr_w = tr_w + (FAF - FAF_over_Cwk * FAF) * E_PhiPhiT_k;
     end   
 
     % --- Temporal Update Step (for Phi) ---
@@ -216,8 +231,8 @@ for iter = 1:maxIter
         end
         for k = 1:numW
             E_PhiPhiT_k = Phi(k,:) * Phi(k,:)' + Ntimepoints*C_phi(k,k);
-            C_wk = FAF + Cnoise / E_PhiPhiT_k;
-            mu = mu + trace(LFG(:,cols)' / C_wk * LFG(:,cols));
+            C_wk = stabilize_spd(FAF + Cnoise / E_PhiPhiT_k, cwkReg);
+            mu = mu + trace(right_solve_spd(LFG(:,cols)', C_wk) * LFG(:,cols));
         end
                 
         Cgamma(i) = sqrt( mu / trace(W(cols,:)' * W(cols,:)) );
@@ -243,7 +258,7 @@ for iter = 1:maxIter
     KL_w = 0;
     for k = 1:numW
         E_PhiPhiT_k = Phi(k,:) * Phi(k,:)' + Ntimepoints*C_phi(k,k);
-        C_wk = FAF + Cnoise / E_PhiPhiT_k;
+        C_wk = stabilize_spd(FAF + Cnoise / E_PhiPhiT_k, cwkReg);
         KL_w = KL_w - 0.5* (W(:,k).'*(gamma.*W(:,k)) + chol_logdet(C_wk) + log(E_PhiPhiT_k)*Nchannels);      
     end  
     KL_phi = -0.5 * (trace(C_phi * CR) - sum(log(alpha)) - chol_logdet(C_phi)) * Ntimepoints;
@@ -270,7 +285,7 @@ end
 
 %% --- Final Outputs ---
 
-InverseOperator = G * W;
+SpatialWeights_W = G * W;
 
 % % Map back to full source space
 % InverseOperator = zeros(naSource*nd, numW);
@@ -280,9 +295,9 @@ InverseOperator = G * W;
 % end
 % InverseOperator(sort(active_indices_expanded), :) = InverseOperator_active;
 
-Source_Estimate = InverseOperator * Phi;
+Source_Estimate = SpatialWeights_W * Phi;
 
-Parameters.InverseOperator = InverseOperator;
+Parameters.SpatialWeights_W = SpatialWeights_W;
 Parameters.TemporalBasisFunctions = Phi;
 Parameters.LearnedGammas = Cgamma;
 Parameters.LearnedAlphas = alpha;
@@ -290,6 +305,41 @@ Parameters.LearnedNoiseCovariance = Cnoise;
 Parameters.CostHistory = costlist;
 Parameters.NumIterationsPerformed = iter;
 
+end
+
+function Areg = stabilize_spd(A, relReg)
+% Symmetrize and diagonal-load a covariance-like matrix before solves.
+    A = full((A + A') / 2);
+    n = size(A, 1);
+    scale = trace(A) / max(n, 1);
+    if ~isfinite(scale) || scale <= 0
+        scale = norm(A, 'fro') / max(n, 1);
+    end
+    if ~isfinite(scale) || scale <= 0
+        scale = 1;
+    end
+
+    jitter = max(relReg * scale, eps(scale));
+    Areg = A + jitter * eye(n);
+
+    [~, p] = chol(Areg);
+    tries = 0;
+    while p ~= 0 && tries < 6
+        jitter = jitter * 10;
+        Areg = A + jitter * eye(n);
+        [~, p] = chol(Areg);
+        tries = tries + 1;
+    end
+end
+
+function X = right_solve_spd(A, B)
+% Compute A / B through a Cholesky solve when possible.
+    [R, p] = chol(B);
+    if p == 0
+        X = (R \ (R' \ A'))';
+    else
+        X = A * pinv(B);
+    end
 end
 
 function [logDet, err] = chol_logdet(A)

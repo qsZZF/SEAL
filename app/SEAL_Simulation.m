@@ -740,7 +740,7 @@ classdef SEAL_Simulation < matlab.apps.AppBase
                 if app.AddCheckBox.Value == false
                     enforceSingleSelection(app, app.Gauss_PulseCheckBox);
                 end
-                answer = inputdlg({'潜伏期 (s):', '波宽 (s):', '幅值 (nAm):'}, '高斯脉冲设置', [1 50], {'0.3', '1000', '5'});
+                answer = inputdlg({'潜伏期 (s):', '波宽 (s):', '幅值 (nAm):'}, '高斯脉冲设置', [1 50], {'0.3', '0.05', '5'});
                 if ~isempty(answer)
                     app.Params_Gauss_Pulse.Lat = str2double(answer{1});
                     app.Params_Gauss_Pulse.Wid = str2double(answer{2});

@@ -36,9 +36,11 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
 %                                     - If numeric >= 1: invalid, use Otsu method.
 %                                     - 'otsu': Uses Otsu's method.
 %                                     Default: 0.1 (relative).
-%       'NumStepsROC' (integer): Number of threshold steps for ROC/PR AUC. Default: 100.
-%       'RepsROC' (integer): Number of repetitions for ROC AUC bias correction. Default: 50.
-%       'OrderROC' (integer): Max neighbor order for ROC AUC close field. Default: 6.
+%       'NumStepsROC' (integer): Number of threshold steps for the auxiliary
+%                                     spatially balanced ROC. Default: 100.
+%       'RepsROC' (integer): Number of repetitions for the auxiliary
+%                                     spatially balanced ROC. Default: 50.
+%       'OrderROC' (integer): Max neighbor order for its close field. Default: 6.
 %       'EMDLambda' (scalar): Entropic regularization for Sinkhorn. Default: 1.
 %       'EMDMaxIter' (integer): Max Sinkhorn iterations. Default: 500.
 %       'EMDTolerance' (scalar): Sinkhorn convergence tolerance. Default: 1e-5.
@@ -225,28 +227,40 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
 
     %% ROC AUC Calculation
     if any(strcmpi('roc_auc', metricsToCompute))
-        if ~isfield(srcInfo_main, 'VertConn') && strcmpi(distanceType_internal, 'geodesic_graph')
-            warning('seal_evaluate_spatial_metrics:ROCSkipVertConn', 'ROC_AUC with bias correction (and geodesic_graph for close field) requires .VertConn. Skipping ROC_AUC if VertConn is missing.');
-            Results.ROC_AUC = NaN; Results.ROC_Curve = [NaN NaN; NaN NaN];
-        else
+        try
+            [roc_auc_val, roc_curve_val, param_roc] = compute_standard_roc_auc( ...
+                s_est_abs, true_active_idx_input);
+            Results.ROC_AUC = roc_auc_val;
+            Results.ROC_Curve = roc_curve_val;
+            Results.ParamROC_details = param_roc;
+
+            % Preserve the previous close/far balanced calculation as a
+            % separately named diagnostic. It is not a standard ROC-AUC.
             try
-                [roc_auc_val, roc_curve_val, param_roc] = compute_roc_auc(s_est_abs, true_active_idx_input, active_seedVox, srcInfo_main,  ...
+                [balanced_auc, balanced_curve, balanced_param] = compute_spatially_balanced_roc_auc( ...
+                    s_est_abs, true_active_idx_input, active_seedVox, srcInfo_main, ...
                     p.Results.NumStepsROC, p.Results.RepsROC, p.Results.OrderROC);
-                Results.ROC_AUC = roc_auc_val;
-                Results.ROC_Curve = roc_curve_val;
-                Results.ParamROC_details = param_roc;
-            catch ME_roc
-                warning('seal_evaluate_spatial_metrics:ROCFailed', 'ROC AUC calculation failed: %s', ME_roc.message);
-                Results.ROC_AUC = NaN; Results.ROC_Curve = [NaN NaN; NaN NaN];
+                Results.ROC_AUC_SpatialBalanced = balanced_auc;
+                Results.ROC_Curve_SpatialBalanced = balanced_curve;
+                Results.ParamROC_SpatialBalanced = balanced_param;
+            catch ME_balanced_roc
+                warning('seal_evaluate_spatial_metrics:SpatialBalancedROCFailed', ...
+                    'Spatially balanced ROC calculation failed: %s', ME_balanced_roc.message);
+                Results.ROC_AUC_SpatialBalanced = NaN;
+                Results.ROC_Curve_SpatialBalanced = [NaN NaN; NaN NaN];
             end
+        catch ME_roc
+            warning('seal_evaluate_spatial_metrics:ROCFailed', 'ROC AUC calculation failed: %s', ME_roc.message);
+            Results.ROC_AUC = NaN; Results.ROC_Curve = [NaN NaN; NaN NaN];
         end
     end
 
     %% PR AUC Calculation
     if any(strcmpi('pr_auc', metricsToCompute))
         try
-            [pr_auc_val, pr_curve_val, param_pr] = compute_pr_auc(s_est_abs, true_active_idx_input,  p.Results.NumStepsROC);
+            [pr_auc_val, pr_curve_val, param_pr] = compute_pr_auc(s_est_abs, true_active_idx_input);
             Results.PR_AUC = pr_auc_val;
+            Results.AveragePrecision = pr_auc_val;
             Results.PR_Curve = pr_curve_val;
             Results.ParamPR_details = param_pr;
         catch ME_pr
@@ -303,13 +317,14 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
         if any(strcmpi('f1', metricsToCompute))
             if (Results.Precision + Results.Recall) == 0, Results.F1_Score = 0;
             else, Results.F1_Score = 2 * (Results.Precision * Results.Recall) / (Results.Precision + Results.Recall); end
+            Results.F1 = Results.F1_Score;
         end
         if any(strcmpi('aprime', metricsToCompute))
             if (TP + FN) == 0, Hr = 1; else, Hr = TP / (TP + FN); end
             actual_negatives_idx = setdiff((1:Nsources)', true_active_idx_input);
             N_actual_negatives = length(actual_negatives_idx);
             if N_actual_negatives == 0, Fr = 0; else, Fr = FP / N_actual_negatives; end
-            Results.APrime = (Hr - Fr)/2 + 0.5;
+            Results.APrime = compute_aprime(Hr, Fr);
             if isnan(Results.APrime), Results.APrime = 0.5; end
         end
     end
@@ -513,7 +528,42 @@ function [dle_values, mean_dle, sd_value, estimated_peak_indices_for_true] = com
     if denominator < Nsources_local * eps, sd_value = Inf; else, sd_value = sqrt(numerator / denominator); end
 end
 
-function [auc_roc, tpr_fpr_curve, ParamROC_local] = compute_roc_auc(s_est_abs, true_active_idx, seed_vox, srcInfo_local, num_steps, num_reps, close_order)
+function [auc_roc, tpr_fpr_curve, ParamROC_local] = compute_standard_roc_auc(s_est_abs, true_active_idx)
+    % Exact empirical ROC using every cortical vertex and all unique scores.
+    num_sources = numel(s_est_abs);
+    labels = false(num_sources, 1);
+    labels(true_active_idx) = true;
+    num_positive = sum(labels);
+    num_negative = num_sources - num_positive;
+
+    ParamROC_local = struct('Method', 'exact_all_vertices', ...
+        'NumPositive', num_positive, 'NumNegative', num_negative);
+    if num_positive == 0 || num_negative == 0
+        auc_roc = NaN;
+        tpr_fpr_curve = [NaN NaN; NaN NaN];
+        return;
+    end
+
+    [scores_descending, order] = sort(s_est_abs, 'descend');
+    labels_descending = labels(order);
+    group_end = [find(diff(scores_descending) ~= 0); num_sources];
+    group_start = [1; group_end(1:end-1) + 1];
+    positives_per_group = zeros(numel(group_end), 1);
+    negatives_per_group = zeros(numel(group_end), 1);
+    for i_group = 1:numel(group_end)
+        group_labels = labels_descending(group_start(i_group):group_end(i_group));
+        positives_per_group(i_group) = sum(group_labels);
+        negatives_per_group(i_group) = numel(group_labels) - positives_per_group(i_group);
+    end
+
+    true_positive_rate = [0; cumsum(positives_per_group) / num_positive];
+    false_positive_rate = [0; cumsum(negatives_per_group) / num_negative];
+    tpr_fpr_curve = [false_positive_rate, true_positive_rate];
+    auc_roc = trapz(false_positive_rate, true_positive_rate);
+    ParamROC_local.Thresholds = [Inf; scores_descending(group_start)];
+end
+
+function [auc_roc, tpr_fpr_curve, ParamROC_local] = compute_spatially_balanced_roc_auc(s_est_abs, true_active_idx, seed_vox, srcInfo_local, num_steps, num_reps, close_order)
     ParamROC_local = struct();    
     max_s_est = max(s_est_abs);
     Nsources_local = size(s_est_abs, 1);
@@ -523,7 +573,12 @@ function [auc_roc, tpr_fpr_curve, ParamROC_local] = compute_roc_auc(s_est_abs, t
     
     all_tpr = zeros(num_steps, num_reps); all_fpr = zeros(num_steps, num_reps);
     
-    adj = srcInfo_local.VertConn; close_field_global_idx = [];
+    if isfield(srcInfo_local, 'VertConn') && ~isempty(srcInfo_local.VertConn)
+        adj = srcInfo_local.VertConn;
+    else
+        adj = [];
+    end
+    close_field_global_idx = [];
     if close_order > 0 && ~isempty(adj) && exist('graphshortestpath', 'file')
         for k_true = 1:length(seed_vox)
             try
@@ -537,28 +592,37 @@ function [auc_roc, tpr_fpr_curve, ParamROC_local] = compute_roc_auc(s_est_abs, t
     if isempty(close_field_global_idx), close_field_global_idx = true_active_idx; end
     close_field_global_idx = unique(close_field_global_idx(:));
 
+    use_exact_all_negatives = (close_order <= 0) || isempty(adj);
+
     for r = 1:num_reps
         close_inactive_cand = setdiff(close_field_global_idx, true_active_idx);
         far_inactive_cand = setdiff((1:Nsources_local)', close_field_global_idx);
         num_true = length(true_active_idx);
         n_close = floor(num_true/2); n_far = num_true - n_close;
-        
-        samp_close_inact = []; if ~isempty(close_inactive_cand) && n_close>0, idx_c = randperm(length(close_inactive_cand)); samp_close_inact = close_inactive_cand(idx_c(1:min(n_close,end))); end
-        samp_far_inact = []; if ~isempty(far_inactive_cand) && n_far>0, idx_f = randperm(length(far_inactive_cand)); samp_far_inact = far_inactive_cand(idx_f(1:min(n_far,end))); end
-        
-        % Fill up if one set was too small
-        if length(samp_close_inact) < n_close && ~isempty(far_inactive_cand)
-            needed = n_close - length(samp_close_inact);
-            rem_far = setdiff(far_inactive_cand, samp_far_inact);
-            if ~isempty(rem_far), idx_rf = randperm(length(rem_far)); samp_close_inact = [samp_close_inact; rem_far(idx_rf(1:min(needed,end)))]; end
+
+        if use_exact_all_negatives
+            inactive_sample_idx = setdiff((1:Nsources_local)', true_active_idx);
+        else
+            samp_close_inact = []; if ~isempty(close_inactive_cand) && n_close>0, idx_c = randperm(length(close_inactive_cand)); samp_close_inact = close_inactive_cand(idx_c(1:min(n_close,end))); end
+            samp_far_inact = []; if ~isempty(far_inactive_cand) && n_far>0, idx_f = randperm(length(far_inactive_cand)); samp_far_inact = far_inactive_cand(idx_f(1:min(n_far,end))); end
+            
+            % Fill up if one set was too small
+            if length(samp_close_inact) < n_close && ~isempty(far_inactive_cand)
+                needed = n_close - length(samp_close_inact);
+                rem_far = setdiff(far_inactive_cand, samp_far_inact);
+                if ~isempty(rem_far), idx_rf = randperm(length(rem_far)); samp_close_inact = [samp_close_inact; rem_far(idx_rf(1:min(needed,end)))]; end
+            end
+            if length(samp_far_inact) < n_far && ~isempty(close_inactive_cand)
+                 needed = n_far - length(samp_far_inact);
+                 rem_close = setdiff(close_inactive_cand, samp_close_inact);
+                 if ~isempty(rem_close), idx_rc = randperm(length(rem_close)); samp_far_inact = [samp_far_inact; rem_close(idx_rc(1:min(needed,end)))]; end
+            end
+            inactive_sample_idx = unique([samp_close_inact; samp_far_inact]);
+            if isempty(inactive_sample_idx) && num_true < Nsources_local
+                inactive_sample_idx = setdiff((1:Nsources_local)', true_active_idx);
+                if length(inactive_sample_idx)>num_true, inactive_sample_idx = inactive_sample_idx(randperm(length(inactive_sample_idx),num_true)); end
+            end
         end
-        if length(samp_far_inact) < n_far && ~isempty(close_inactive_cand)
-             needed = n_far - length(samp_far_inact);
-             rem_close = setdiff(close_inactive_cand, samp_close_inact);
-             if ~isempty(rem_close), idx_rc = randperm(length(rem_close)); samp_far_inact = [samp_far_inact; rem_close(idx_rc(1:min(needed,end)))]; end
-        end
-        inactive_sample_idx = unique([samp_close_inact; samp_far_inact]);
-        if isempty(inactive_sample_idx) && num_true < Nsources_local, inactive_sample_idx = setdiff((1:Nsources_local)', true_active_idx); if length(inactive_sample_idx)>num_true, inactive_sample_idx = inactive_sample_idx(randperm(length(inactive_sample_idx),num_true)); end; end
 
 
         for t_idx = 1:num_steps
@@ -574,47 +638,56 @@ function [auc_roc, tpr_fpr_curve, ParamROC_local] = compute_roc_auc(s_est_abs, t
     [sorted_fpr, sort_idx] = sort(unique_fpr_tpr(:,1));
     sorted_tpr = unique_fpr_tpr(sort_idx,2);
     final_fpr = [0; sorted_fpr; 1]; final_tpr = [0; sorted_tpr; 1];
-    [unique_final_pts, ia] = unique([final_fpr, final_tpr], 'rows', 'first'); % Use 'first' to keep original ordering for trapz
+    [unique_final_pts, ~] = unique([final_fpr, final_tpr], 'rows', 'first'); % Use 'first' to keep original ordering for trapz
     tpr_fpr_curve = unique_final_pts;
     auc_roc = trapz(tpr_fpr_curve(:,1), tpr_fpr_curve(:,2));
     ParamROC_local.Mean_TPR = mean_tpr; ParamROC_local.Mean_FPR = mean_fpr;
 end
 
-function [auc_pr, precision_recall_curve, ParamPR_local] = compute_pr_auc(s_est_abs, true_active_idx,  num_steps)
-    % Simplified PR AUC - inputs assumed valid
-    ParamPR_local = struct();
-    max_s_est = max(s_est_abs);
-    if max_s_est < eps, auc_pr=0; precision_recall_curve=[0 1;1 0]; ParamPR_local.PrecisionValues=zeros(num_steps,1); ParamPR_local.RecallValues=zeros(num_steps,1); return; end
-    thresholds = linspace(0, max_s_est, num_steps);
-    precision_vals = zeros(num_steps,1); recall_vals = zeros(num_steps,1);
-    num_actual_pos = length(true_active_idx);
-    if num_actual_pos == 0, auc_pr=NaN; precision_recall_curve=[0 1;1 0]; ParamPR_local.PrecisionValues=NaN; ParamPR_local.RecallValues=NaN; return; end
+function [auc_pr, precision_recall_curve, ParamPR_local] = compute_pr_auc(s_est_abs, true_active_idx)
+    % Exact non-interpolated average precision using all unique scores.
+    num_sources = numel(s_est_abs);
+    labels = false(num_sources, 1);
+    labels(true_active_idx) = true;
+    num_positive = sum(labels);
+    ParamPR_local = struct('Method', 'exact_average_precision', ...
+        'NumPositive', num_positive, 'NumNegative', num_sources - num_positive);
+    if num_positive == 0
+        auc_pr = NaN;
+        precision_recall_curve = [NaN NaN; NaN NaN];
+        return;
+    end
 
-    for t_idx = 1:num_steps
-        est_pos = find(s_est_abs >= thresholds(t_idx));
-        TP = length(intersect(est_pos, true_active_idx));
-        FP = length(setdiff(est_pos, true_active_idx));
-        if (TP+FP)==0, precision_vals(t_idx)=1; else, precision_vals(t_idx)=TP/(TP+FP); end
-        recall_vals(t_idx) = TP/num_actual_pos;
+    [scores_descending, order] = sort(s_est_abs, 'descend');
+    labels_descending = labels(order);
+    group_end = [find(diff(scores_descending) ~= 0); num_sources];
+    group_start = [1; group_end(1:end-1) + 1];
+    positives_per_group = zeros(numel(group_end), 1);
+    for i_group = 1:numel(group_end)
+        positives_per_group(i_group) = sum(labels_descending( ...
+            group_start(i_group):group_end(i_group)));
     end
-    ParamPR_local.PrecisionValues = precision_vals; ParamPR_local.RecallValues = recall_vals;
-    
-    % Sort by recall, then by precision descending for ties
-    [sorted_pr_pts, ~] = sortrows([recall_vals, precision_vals], [1, -2]);
-    
-    % Add standard anchor points (0,1) and (1,0)
-    final_recall = [0; sorted_pr_pts(:,1); 1];
-    final_precision = [1; sorted_pr_pts(:,2); 0]; % P=1 at R=0, P=0 at R=1 (common convention)
-    
-    [unique_pr_pts, ~] = unique([final_recall, final_precision], 'rows', 'stable');
-    
-    % Ensure precision is non-increasing for AUC calculation
-    unique_precision_mono = unique_pr_pts(:,2);
-    for i = length(unique_precision_mono)-1:-1:1
-        unique_precision_mono(i) = max(unique_precision_mono(i), unique_precision_mono(i+1));
+
+    cumulative_positive = cumsum(positives_per_group);
+    recall = cumulative_positive / num_positive;
+    precision = cumulative_positive ./ group_end;
+    precision_recall_curve = [[0; recall], [1; precision]];
+    auc_pr = sum(diff([0; recall]) .* precision);
+    ParamPR_local.Thresholds = scores_descending(group_start);
+    ParamPR_local.PrecisionValues = precision;
+    ParamPR_local.RecallValues = recall;
+end
+
+function aprime_val = compute_aprime(hit_rate, false_alarm_rate)
+    if hit_rate == false_alarm_rate
+        aprime_val = 0.5;
+    elseif hit_rate > false_alarm_rate
+        aprime_val = 0.5 + ((hit_rate - false_alarm_rate) * (1 + hit_rate - false_alarm_rate)) / ...
+            (4 * hit_rate * (1 - false_alarm_rate));
+    else
+        aprime_val = 0.5 - ((false_alarm_rate - hit_rate) * (1 + false_alarm_rate - hit_rate)) / ...
+            (4 * false_alarm_rate * (1 - hit_rate));
     end
-    precision_recall_curve = [unique_pr_pts(:,1), unique_precision_mono];
-    auc_pr = trapz(precision_recall_curve(:,1), precision_recall_curve(:,2));
 end
 
 function [MSE,CORRall,CORRroi,CORRavg] = ESItemporalMetric(s_est,s_real,activevoxseed)

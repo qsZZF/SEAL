@@ -98,7 +98,11 @@ reg.uSTAR = struct( ...
     'title','uSTAR Settings', ...
     'params',{{
     {'NumTBFs','NumTBFs','numeric',4}
+    {'MaxIterations','MaxIterations','numeric',50}
+    {'Tolerance','Tolerance','numeric',1e-6}
     {'uSTARRunAlgorithm','RunAlgorithm','dropdown','STAR',{'STAR','sSTARTS'}}
+    {'PriorType','PriorType','dropdown','Laplacian',{'Laplacian','LAURA'}}
+    {'CwkRegularization','CwkRegularization','numeric',1e-10}
     % 特殊控件单独标记，引擎跳过，由专用方法补
     }});
 % 'customBuilder','builduSTARExtras');   % 处理 MicrostateMaps 这种非标准控件
@@ -116,6 +120,7 @@ reg.STARTS = struct( ...
     {'BlockCorrelation','BlockCorrelation','numeric',0.99} 
     {'PruneGammas','PruneGammas','numeric',1e-4} 
     {'PruneAlphas','PruneAlphas','numeric', 1e-4} 
+    {'CwkRegularization','CwkRegularization','numeric',1e-10}
     }});
 %InitialTBFs
 

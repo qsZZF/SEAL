@@ -1489,7 +1489,13 @@ end
             active_indices= SimuInfo.activeIndices;
             seedvox = SimuInfo.SourceData.SeedVertices;
             s_energy = sqrt(sum(s.^2, 2));   % 用 RMS 而非能量
-            true_idx = unique(cell2mat(active_indices(:)));  % 显式去重并保证列向量
+            if iscell(active_indices)
+                active_indices = cellfun(@(x) x(:), active_indices(:), 'UniformOutput', false);
+                true_idx = unique(vertcat(active_indices{:}));
+            else
+                true_idx = unique(active_indices(:));
+                active_indices = {true_idx};
+            end
             disttype = 'euclidean'; % 'geodesic'
             threshold = 0.1;
             metrics_to_compute = {'DLE','SD','EMD','ROC_AUC','PR_AUC','F1','Precision','Recall','APrime'};

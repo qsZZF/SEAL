@@ -35,6 +35,8 @@ function [Source_Estimate, Parameters] = seal_uSTAR(Data, L, sourceSpaceInfo, va
 %       'RunAlgorithm' (string): Algorithm type, 'STAR'/'sSTARTS'. Default:'STAR'.
 %       'PriorType' (string): Prior type, 'Laplacian'/'LAURA'. Default:'Laplacian'.
 %       'NumOrientations' (integer): Orientations per location (nd). Default: 1.
+%       'CwkRegularization' (double): Relative diagonal loading applied to
+%                                     C_wk/C_e before linear solves. Default: 1e-10.
 %   Outputs:
 %       Source_Estimate (double matrix): Nsources x Ntimepoints estimated source activity.
 %       Parameters (struct): A struct containing detailed output:
@@ -67,6 +69,7 @@ addParameter(p, 'Tolerance', 1e-6, @(x) isscalar(x) && x > 0);
 addParameter(p, 'RunAlgorithm', 'STAR', @(x) isstring(x) || ischar(x));
 addParameter(p, 'PriorType', 'Laplacian', @(x) isstring(x) || ischar(x));
 addParameter(p, 'NumOrientations', 1, @isscalar);
+addParameter(p, 'CwkRegularization', 1e-10, @(x) isscalar(x) && x >= 0);
 
 try
     parse(p, Data, L, sourceSpaceInfo, varargin{:});
@@ -190,6 +193,7 @@ Phi = opts.InitialTBFs;
 maxIter = opts.MaxIterations;
 epsilon = opts.Tolerance;
 nd = opts.NumOrientations;
+cwkReg = opts.CwkRegularization;
 
 if isempty(Phi)
     [~,~,tD] = svd(B, 'econ');
@@ -235,10 +239,13 @@ for iter = 1:maxIter
     for k = 1:numW
         tIdx = setdiff(1:numW, k);
         x = (Phi(k,:)*Phi(k,:).') + nSamp * C_phi(k,k);
-        C_wk = FAF + C_noise / x;
+        C_wk = stabilize_spd(FAF + C_noise / x, cwkReg);
         r_k = (B - L*E) * Phi(k,:).' - L * sum(W(:,tIdx) .* repmat(Phi(k,:)*Phi(tIdx,:).' + nSamp*C_phi(k,tIdx), nSource, 1), 2);
-        W_t(:,k) = repmat(1./gamma, 1, nSensor) .* F.' / C_wk * r_k / x;
-        diagCk(k) = trace(FAF/C_noise - FAF/C_wk*FAF/C_noise);
+        WeightedFT = repmat(1./gamma, 1, nSensor) .* F.';
+        WeightedFT_over_Cwk = right_solve_spd(WeightedFT, C_wk);
+        FAF_over_Cwk = right_solve_spd(FAF, C_wk);
+        W_t(:,k) = WeightedFT_over_Cwk * r_k / x;
+        diagCk(k) = trace(FAF/C_noise - FAF_over_Cwk*FAF/C_noise);
     end
     W = M \ W_t;
     
@@ -249,16 +256,19 @@ for iter = 1:maxIter
     Phi = C_phi * LW.' / C_noise * (B - L*E);
     
     % E-Step: Update Residual E
-    C_e = F .* repmat(1./lambda', nSensor, 1) * F.' + C_noise;
-    E_t = repmat(1./lambda, 1, nSensor) .* F.' / C_e * (B - L*W*Phi);
+    C_e = stabilize_spd(F .* repmat(1./lambda', nSensor, 1) * F.' + C_noise, cwkReg);
+    WeightedFT_e = repmat(1./lambda, 1, nSensor) .* F.';
+    WeightedFT_e_over_Ce = right_solve_spd(WeightedFT_e, C_e);
+    E_t = WeightedFT_e_over_Ce * (B - L*W*Phi);
     E = M \ E_t;
     
     % M-Step: Update Hyperparameters (with Group Sparsity Pooling)
     mu = zeros(nSource, 1);
     for k = 1:numW
         x = (Phi(k,:)*Phi(k,:).') + nSamp * C_phi(k,k);
-        C_wk = FAF + C_noise / x;
-        mu = mu + sum((F.'/C_wk).*F.', 2);
+        C_wk = stabilize_spd(FAF + C_noise / x, cwkReg);
+        F_over_Cwk = right_solve_spd(F.', C_wk);
+        mu = mu + sum(F_over_Cwk.*F.', 2);
     end
     
     % Pool variance calculations if Multi-Orientation
@@ -274,7 +284,8 @@ for iter = 1:maxIter
     
     alpha = nSamp ./ (diag(C_phi) + diag(Phi*Phi.'));
     
-    beta_val = sum(F.'/C_e.*F.', 2);
+    F_over_Ce = right_solve_spd(F.', C_e);
+    beta_val = sum(F_over_Ce.*F.', 2);
     if nd > 1
         beta_loc = sum(reshape(beta_val, nd, []), 1)';
         E_pow_loc = sum(reshape(sum(E_t.^2, 2), nd, []), 1)';
@@ -294,7 +305,7 @@ for iter = 1:maxIter
     FAF = F.*repmat(1./gamma',nSensor,1)* F.';
     for k = 1:numW
         x = (Phi(k,:)*Phi(k,:).')+nSamp*C_phi(k,k);
-        C_wk = FAF+C_noise/x;
+        C_wk = stabilize_spd(FAF+C_noise/x, cwkReg);
         
         temp = temp + W(:,k).'.*gamma.'*W(:,k);
         tempk = tempk + chol_logdet(C_wk) + log(x)*nSensor;
@@ -327,6 +338,7 @@ Phi = opts.InitialTBFs;
 maxIter = opts.MaxIterations;
 epsilon = opts.Tolerance;
 nd = opts.NumOrientations;
+cwkReg = opts.CwkRegularization;
 C_noise = eye(nSensor); % noise covariance
 
 
@@ -378,10 +390,13 @@ for iter = 1:maxIter
     for k = 1:numW
         tIdx = setdiff(1:numW,k);
         x = ((Phi(k,:)*Phi(k,:).')+nSamp*C_phi(k,k));
-        C_wk = FAF+C_noise/x;
+        C_wk = stabilize_spd(FAF+C_noise/x, cwkReg);
         r_k = B*Phi(k,:).'-LF*sum(W(:,tIdx).*repmat(Phi(k,:)*Phi(tIdx,:).'+nSamp*C_phi(k,tIdx),nSource,1),2);
-        W_t(:,k) = repmat(1./gamma,1,nSensor).*F.'/C_wk*r_k/x;
-        diagCk(k) = trace(FAF/C_noise-FAF/C_wk*FAF/C_noise);
+        WeightedFT = repmat(1./gamma,1,nSensor).*F.';
+        WeightedFT_over_Cwk = right_solve_spd(WeightedFT, C_wk);
+        FAF_over_Cwk = right_solve_spd(FAF, C_wk);
+        W_t(:,k) = WeightedFT_over_Cwk*r_k/x;
+        diagCk(k) = trace(FAF/C_noise-FAF_over_Cwk*FAF/C_noise);
     end
     W = M\W_t;
     
@@ -395,8 +410,9 @@ for iter = 1:maxIter
     mu = zeros(nSource,1);
     for k = 1:numW
         x = (Phi(k,:)*Phi(k,:).')+nSamp*C_phi(k,k);
-        C_wk = FAF+C_noise/x; 
-        mu = mu+sum((F.'/C_wk).*F.',2);
+        C_wk = stabilize_spd(FAF+C_noise/x, cwkReg); 
+        F_over_Cwk = right_solve_spd(F.', C_wk);
+        mu = mu+sum(F_over_Cwk.*F.',2);
     end
     
     gamma_update = zeros(nSource, 1);
@@ -430,10 +446,10 @@ for iter = 1:maxIter
     FAF = F.*repmat(1./gamma',nSensor,1)* F.';
     for k = 1:numW
         x = (Phi(k,:)*Phi(k,:).') + nSamp*C_phi(k,k);
-        C_wk = FAF + C_noise/x;
+        C_wk = stabilize_spd(FAF + C_noise/x, cwkReg);
         temp = temp + W_t(:,k).'.*gamma.'*W_t(:,k);
         tempk = tempk + chol_logdet(C_wk) + log(x)*nSensor;
-        tempbw = tempbw + FAF - FAF/C_wk * FAF;
+        tempbw = tempbw + FAF - right_solve_spd(FAF, C_wk) * FAF;
     end
     cost_old = cost;
     
@@ -478,6 +494,41 @@ function mslabel = seal_microsmooth(Data, MSmap, options)
 mslabel = nan(T,N);
 for tr = 1:T
     mslabel(tr,:) = reject_segments(Data(:,:,tr), MSmap, options);
+end
+end
+
+function Areg = stabilize_spd(A, relReg)
+% Symmetrize and diagonal-load a covariance-like matrix before solves.
+A = full((A + A') / 2);
+n = size(A, 1);
+scale = trace(A) / max(n, 1);
+if ~isfinite(scale) || scale <= 0
+    scale = norm(A, 'fro') / max(n, 1);
+end
+if ~isfinite(scale) || scale <= 0
+    scale = 1;
+end
+
+jitter = max(relReg * scale, eps(scale));
+Areg = A + jitter * eye(n);
+
+[~, p] = chol(Areg);
+tries = 0;
+while p ~= 0 && tries < 6
+    jitter = jitter * 10;
+    Areg = A + jitter * eye(n);
+    [~, p] = chol(Areg);
+    tries = tries + 1;
+end
+end
+
+function X = right_solve_spd(A, B)
+% Compute A / B through a Cholesky solve when possible.
+[R, p] = chol(B);
+if p == 0
+    X = (R \ (R' \ A'))';
+else
+    X = A * pinv(B);
 end
 end
 
