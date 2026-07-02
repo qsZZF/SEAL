@@ -235,7 +235,7 @@ classdef SEAL_Simulation < matlab.apps.AppBase
                     'amplitude_rel', 1.0, ...
                     'frequency_Hz', app.Params_ERP_Gabor.Freq, ...
                     'std_dev_s', app.Params_ERP_Gabor.Wid, ...
-                    'phase_rad', 0);
+                    'phase_rad', pi/2);
                 paramList{end+1} = p; clear p;
             end
  
@@ -342,10 +342,10 @@ classdef SEAL_Simulation < matlab.apps.AppBase
                 for srcIdx = 1:length(app.SourceData)
                     src = app.SourceData(srcIdx);
  
-                    patchArea_m2   = src.PatchArea_mm2 * 1e-6;
-                    patchRadius_mm = sqrt(max(src.PatchArea_mm2, eps) / pi);
-                    decay_m        = (patchRadius_mm * max(src.PowerDecay_pct, eps) / 100) * 1e-3;
- 
+                    patchArea_mm2  = src.PatchArea_mm2;
+                    patchRadius_mm = sqrt(max(patchArea_mm2, eps) / pi);
+                    decay_mm       = patchRadius_mm * max(src.PowerDecay_pct, eps) / 100;
+
                     % ✅ 统一使用 DecayModel 字段,不再用 useGaussian 逻辑开关
                     decay_model = lower(src.DecayModel);   % 'gaussian' | 'linear' | 'flat' | 'exponential'
  
@@ -354,18 +354,18 @@ classdef SEAL_Simulation < matlab.apps.AppBase
  
                         if app.isCustomFallback(wp.waveformtype)
                             [S_part, idx_cell] = runFallbackROIBatch(app, cortex, wp, t, ...
-                                src.SeedVertices, patchArea_m2, decay_m, decay_model);
+                                src.SeedVertices, patchArea_mm2, decay_mm, decay_model);
                         else
                             ROIs = [];
                             for s = 1:length(src.SeedVertices)
                                 roi = struct();
                                 roi.seedvox         = src.SeedVertices(s);
-                                roi.extent          = patchArea_m2;
+                                roi.extent          = patchArea_mm2;
                                 roi.waveform_params = wp;
                                 % ✅ 透传衰减模型和特征距离到引擎
                                 roi.waveform_params.decay_model = decay_model;
                                 if ~strcmp(decay_model, 'flat')
-                                    roi.waveform_params.decay = decay_m;
+                                    roi.waveform_params.decay = decay_mm;
                                 end
                                 ROIs = [ROIs, roi]; %#ok<AGROW>
                             end
@@ -389,7 +389,7 @@ classdef SEAL_Simulation < matlab.apps.AppBase
         end
 
       function [S_part, idx_cell] = runFallbackROIBatch(app, cortex, wp, t, ...
-                 seedVerts, patchArea_m2, decay_m, decay_model)
+                 seedVerts, patchArea_mm2, decay_mm, decay_model)
             % seal_generate_waveform 不支持的三种类型走这里。
             % 复用 seal_generate_source_activity 的 PatchGenerate (通过零幅值 dummy ROI),
             % 然后用我们手算的波形 + 与引擎严格一致的空间权重公式
@@ -406,7 +406,7 @@ classdef SEAL_Simulation < matlab.apps.AppBase
             for s = 1:length(seedVerts)
                 seed = seedVerts(s);
                 dummyROI = struct('seedvox', seed, ...
-                    'extent',  patchArea_m2, ...
+                    'extent',  patchArea_mm2, ...
                     'waveform_params', dummyWP);
                 [~, idx_one] = seal_generate_source_activity(cortex, dummyROI, t);
                 patch_idx = idx_one{1};
@@ -415,21 +415,25 @@ classdef SEAL_Simulation < matlab.apps.AppBase
                 % ✅ 与引擎层严格一致的空间权重计算
                 cc = cortex.Vertices(seed, :);
                 pc = cortex.Vertices(patch_idx, :);
-                d  = sqrt(sum((pc - cc).^2, 2));
- 
+                coord_to_mm = 1000;
+                if max(abs(cortex.Vertices(:))) >= 10
+                    coord_to_mm = 1;
+                end
+                d = sqrt(sum((pc - cc).^2, 2)) * coord_to_mm;
+
                 switch lower(decay_model)
                     case 'flat'
                         w_spatial = ones(length(patch_idx), 1);
                     case 'gaussian'
-                        sigma2 = decay_m^2 / log(2);
+                        sigma2 = decay_mm^2 / log(2);
                         w_spatial = exp(-d.^2 / sigma2);
                     case 'linear'
-                        w_spatial = max(0, 1 - d / decay_m);
+                        w_spatial = max(0, 1 - d / decay_mm);
                     case 'exponential'
-                        tau = decay_m / log(2);
+                        tau = decay_mm / log(2);
                         w_spatial = exp(-d / tau);
                     otherwise
-                        sigma2 = decay_m^2 / log(2);
+                        sigma2 = decay_mm^2 / log(2);
                         w_spatial = exp(-d.^2 / sigma2);
                 end
  
@@ -1223,7 +1227,7 @@ classdef SEAL_Simulation < matlab.apps.AppBase
         % Value changed function: DecayModelDropDown
         function DecayModelDropDownValueChanged(app, event)
             value = app.DecayModelDropDown.Value;
-            if   strcmp(value,'flat')
+            if strcmpi(value, 'flat')
                 app.PowerDecayEditField.Enable = 'off';
             else
                 app.PowerDecayEditField.Enable = 'on';

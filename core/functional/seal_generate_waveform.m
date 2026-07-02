@@ -64,7 +64,6 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
 %       pulse_params.amplitude = 2; % other params will use defaults
 %       pulse_wave = seal_generate_waveform(t, Fs, 'gaussian_pulse', pulse_params);
 
-%   Author: FengZhao
 
     Ntimepoints = length(timeVector);
     waveform = zeros(1, Ntimepoints); % Initialize output
@@ -73,6 +72,9 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
 
     % Ensure waveformParams is a struct
     if ~isstruct(waveformParams), waveformParams = struct(); end
+    if isfield(waveformParams, 'random_seed') && ~isempty(waveformParams.random_seed)
+        rng(waveformParams.random_seed);
+    end
 
     % Get overall amplitude scale, defaulting if not present
     if isfield(waveformParams, 'amplitude')
@@ -250,7 +252,7 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
                 params.decay_tau_s = params.duration_s / 4;
             end
             
-            idx_peak = round(params.latency_s * samplingRate);
+            idx_peak = round((params.latency_s - timeVector(1)) * samplingRate) + 1;
             if idx_peak < 1, idx_peak = 1; end
             if idx_peak > Ntimepoints, idx_peak = Ntimepoints; end
             half_duration_samples = round(params.duration_s * samplingRate / 2);
@@ -300,23 +302,8 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
 
             total_samples_needed = Ntimepoints + params.burn_in_samples;
             innovation_noise = sqrt(params.innovation_variance) * randn(1, total_samples_needed);
-
-            ar_coeffs = ar_coeffs(:)';  % 行向量
-            %% 按 filter 函数的约定构造分母
-            filter_a = [1, -ar_coeffs];
-
-            % 稳定性检查
-            poles = roots(filter_a);
-            if any(abs(poles) >= 1)
-                warning('AR 模型不稳定（极点在单位圆外/上）,可能发散');
-                % 投影到单位圆内
-                poles(abs(poles) >= 1) = 0.95 * poles(abs(poles) >= 1) ./ abs(poles(abs(poles) >= 1));
-                filter_a = poly(poles);
-            end
-
-            ar_signal_full = filter(1, filter_a, innovation_noise);
-%%
-            % ar_signal_full = filter(1, filter_coeffs, innovation_noise);
+            
+            ar_signal_full = filter(1, filter_coeffs, innovation_noise);
             
             if length(ar_signal_full) > params.burn_in_samples
                 ar_signal = ar_signal_full(params.burn_in_samples + 1 : params.burn_in_samples + Ntimepoints);
@@ -342,8 +329,13 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
             elseif contains(type_str, 'delta'), defaults.center_frequency_Hz = 2; defaults.bandwidth_Hz = 2;
             elseif contains(type_str, 'gamma'), defaults.center_frequency_Hz = 40; defaults.bandwidth_Hz = 10; 
             end
+            defaults.envelope = 'smooth';
+            defaults.envelope_properties = struct('min_gain', 0.35, 'max_gain', 1.2, 'control_interval_s', 0.35);
             defaults.burst_properties = struct('duty_cycle', 0.5, 'min_duration_s', 0.5, 'max_duration_s', 1.5);
             params = merge_structs(waveformParams, defaults);
+            if isfield(waveformParams, 'envelope_properties') && isstruct(waveformParams.envelope_properties)
+                params.envelope_properties = merge_structs(waveformParams.envelope_properties, defaults.envelope_properties);
+            end
             if isfield(waveformParams, 'burst_properties') && isstruct(waveformParams.burst_properties)
                 params.burst_properties = merge_structs(waveformParams.burst_properties, defaults.burst_properties);
             end
@@ -367,8 +359,12 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
                 filtered_wave = filter(b_filt, a_filt, base_noise);
             end
 
-            if isfield(params, 'burst_properties') && isstruct(params.burst_properties) && ...
-               isfield(params.burst_properties, 'duty_cycle') 
+            if strcmpi(params.envelope, 'smooth')
+                ep = params.envelope_properties;
+                filtered_wave = filtered_wave .* seal_smooth_random_envelope( ...
+                    Ntimepoints, samplingRate, ep.min_gain, ep.max_gain, ep.control_interval_s);
+            elseif strcmpi(params.envelope, 'burst') && isfield(params, 'burst_properties') && ...
+               isstruct(params.burst_properties) && isfield(params.burst_properties, 'duty_cycle')
                 bp = params.burst_properties;
                 mod_envelope = zeros(1, Ntimepoints); 
                 t_idx = 1;
@@ -387,6 +383,8 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
                     end
                 end
                 filtered_wave = filtered_wave .* mod_envelope;
+            elseif ~strcmpi(params.envelope, 'none')
+                error('Unsupported resting envelope: %s', params.envelope);
             end
             waveform = amplitude_scale * (filtered_wave / (max(abs(filtered_wave)) + eps));
 
@@ -399,9 +397,43 @@ function waveform = seal_generate_waveform(timeVector, samplingRate, waveformTyp
     end
 end
 
+% pink noise
+function noise_channel = seal_generate_pink_noise_channel(n_samples)
+    if n_samples == 0, noise_channel = []; return; end
+    n_fft = 2^nextpow2(n_samples); 
+    
+    f = linspace(0, 1, n_fft/2 + 1); 
+    inv_f_spectrum = zeros(size(f));
+    inv_f_spectrum(f > 0) = 1./sqrt(f(f > 0)); 
+    inv_f_spectrum(1) = 0; 
 
+    random_phases = exp(1i * 2 * pi * rand(size(f)));
+    half_spectrum = inv_f_spectrum .* random_phases;
+    
+    full_spectrum = zeros(1, n_fft);
+    full_spectrum(1:n_fft/2+1) = half_spectrum;
+    if n_fft/2+2 <= n_fft % Ensure indices are valid for fliplr
+        full_spectrum(n_fft/2+2:end) = conj(fliplr(half_spectrum(2:end-1)));
+    end
 
-%% merge default and user-provided structs
+    noise_channel_temp = real(ifft(full_spectrum, n_fft));
+    noise_channel = noise_channel_temp(1:n_samples); 
+    noise_channel = noise_channel(:)'; 
+end
+
+function envelope = seal_smooth_random_envelope(n_samples, sampling_rate, min_gain, max_gain, control_interval_s)
+    if n_samples == 0
+        envelope = [];
+        return;
+    end
+    n_controls = max(4, ceil((n_samples / sampling_rate) / max(control_interval_s, eps)) + 2);
+    control_x = linspace(1, n_samples, n_controls);
+    control_y = min_gain + (max_gain - min_gain) * rand(1, n_controls);
+    envelope = interp1(control_x, control_y, 1:n_samples, 'pchip');
+    envelope = min(max(envelope, min_gain), max_gain);
+end
+
+% merge default and user-provided structs
 function S_out = merge_structs(S_user, S_default)
     S_out = S_default;
     if ~isstruct(S_user) || isempty(S_user) 

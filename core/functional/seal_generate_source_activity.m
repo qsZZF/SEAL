@@ -1,4 +1,4 @@
-function [S, active_indices] = seal_generate_source_activity(cortex, ROIs, time_vector, correlated_setting)
+function [S, active_indices, metadata] = seal_generate_source_activity(cortex, ROIs, time_vector, correlated_setting, options)
 %SEAL_GENERATE_SOURCE_ACTIVITY Generates simulated source activity on a cortical surface.
 %   [S, active_indices] = seal_generate_source_activity(cortex, ROIs, time_vector)
 %   creates a source activity matrix 'S' by simulating one or more active
@@ -15,7 +15,10 @@ function [S, active_indices] = seal_generate_source_activity(cortex, ROIs, time_
 %           An array of structs, where each struct defines a Region of Interest (ROI).
 %           Each struct must contain the following fields:
 %           .seedvox (integer) - Vertex index for the center of the ROI.
-%           .extent (double) - Radius of the active patch in millimeters (mm).
+%           .extent (double) - Active patch area in mm^2 by default.
+%                              Set .extent_type='radius_mm' to interpret
+%                              extent as a radius and convert it to area.
+%           .patch_area_mm2 (double, optional) - Explicit active patch area.
 %           .waveform_params (struct) - Parameters for the temporal waveform,
 %                                       which are passed to the local
 %                                       'generate_waveform' function.
@@ -46,6 +49,20 @@ function [S, active_indices] = seal_generate_source_activity(cortex, ROIs, time_
 %
 %   See also: seal_generate_waveform, seal_load_source_activity.
 
+if nargin < 4
+    correlated_setting = [];
+end
+if nargin < 5 || isempty(options)
+    options = struct();
+end
+
+restore_rng = false;
+if isfield(options, 'random_seed') && ~isempty(options.random_seed)
+    old_rng = rng;
+    rng(options.random_seed);
+    restore_rng = true;
+end
+
 % --- Input Validation and Initialization ---
 if ~isfield(cortex, 'Vertices')
     error('The cortex structure must contain a .Vertices field.');
@@ -67,6 +84,8 @@ S = zeros(n_sources, n_time_points);
 active_indices = cell(1, numel(ROIs));
 spatial_weights = cell(1, numel(ROIs));
 [~, VertArea] = tess_area1(cortex);
+coord_to_mm = seal_coordinate_scale_to_mm(cortex.Vertices);
+VertArea_mm2 = VertArea * coord_to_mm^2;
 
 % --- Main Loop: Iterate Through Each ROI ---
 
@@ -76,12 +95,12 @@ for i = 1:numel(ROIs)
     % Get parameters for the current ROI
     roi = ROIs(i);
     center_vertex_idx = roi.seedvox;
-    patch_extent = roi.extent;
+    patch_area_mm2 = seal_resolve_patch_area_mm2(roi);
 
     % --- 1. Spatial Patch Generation ---
 
     % Store the indices of the active patch
-    patch_indices = PatchGenerate(center_vertex_idx, cortex.VertConn, VertArea, patch_extent);
+    patch_indices = PatchGenerate(center_vertex_idx, cortex.VertConn, VertArea_mm2, patch_area_mm2);
     active_indices{i} = patch_indices;
     
     
@@ -91,81 +110,51 @@ for i = 1:numel(ROIs)
     waveform = seal_generate_waveform(time_vector, waveform_params.samplingRate, waveform_params.waveformtype, waveform_params);
     simulated_series(i,:) = waveform;
 
-    
-   % --- 3. Spatial Weight Calculation ---
-    % Determine decay model (default: 'gaussian' for backward compatibility)
+    % --- 3. Spatial Weight Calculation ---
+    % Weight is always 1 at the seed vertex. The selected decay model controls
+    % how the waveform attenuates across the generated patch.
+    spatial_weights{i} = ones(length(patch_indices), 1);
+    decay_model = 'gaussian';
     if isfield(waveform_params, 'decay_model') && ~isempty(waveform_params.decay_model)
         decay_model = lower(waveform_params.decay_model);
-    else
-        decay_model = 'gaussian';
     end
- 
-    % Get coordinates of the center (seed) vertex and all patch vertices
-    center_coords = cortex.Vertices(center_vertex_idx, :);
-    patch_coords  = cortex.Vertices(patch_indices, :);
-    patch_distances = sqrt(sum((patch_coords - center_coords).^2, 2));
- 
-    switch decay_model
-        case 'flat'
-            % Uniform amplitude across the whole patch
-            w = ones(length(patch_indices), 1);
- 
-        case 'gaussian'
-            if ~isfield(waveform_params, 'decay') || isempty(waveform_params.decay)
-                % No decay specified -> fall back to flat (legacy behaviour)
-                w = ones(length(patch_indices), 1);
-            else
-                half_amp = waveform_params.decay;            % half-amplitude distance (m)
-                sigma2   = half_amp.^2 / log(2);
-                w = exp(-patch_distances.^2 / sigma2);
-            end
- 
-        case 'linear'
-            if ~isfield(waveform_params, 'decay') || isempty(waveform_params.decay)
-                w = ones(length(patch_indices), 1);
-            else
-                zero_dist = waveform_params.decay;           % distance where w reaches 0 (m)
-                w = max(0, 1 - patch_distances / zero_dist);
-            end
- 
-        case 'exponential'
-            if ~isfield(waveform_params, 'decay') || isempty(waveform_params.decay)
-                w = ones(length(patch_indices), 1);
-            else
-                half_amp = waveform_params.decay;            % half-amplitude distance (m)
-                tau      = half_amp / log(2);
-                w = exp(-patch_distances / tau);
-            end
- 
-        otherwise
-            warning('seal_generate_source_activity:UnknownDecayModel', ...
-                'Unknown decay_model "%s". Falling back to Gaussian.', decay_model);
-            if isfield(waveform_params, 'decay') && ~isempty(waveform_params.decay)
-                half_amp = waveform_params.decay;
-                sigma2   = half_amp.^2 / log(2);
-                w = exp(-patch_distances.^2 / sigma2);
-            else
-                w = ones(length(patch_indices), 1);
-            end
+
+    if isfield(waveform_params, 'decay') && ~isempty(waveform_params.decay) && ...
+            ~strcmpi(decay_model, 'flat')
+        center_coords = cortex.Vertices(center_vertex_idx, :);
+        patch_coords = cortex.Vertices(patch_indices, :);
+        patch_distances = sqrt(sum((patch_coords - center_coords).^2, 2)) * coord_to_mm;
+        decay_distance = max(waveform_params.decay, eps);
+
+        switch decay_model
+            case 'gaussian'
+                sigma2 = decay_distance.^2 / log(2);
+                spatial_weights{i} = exp(-patch_distances.^2 / sigma2);
+            case 'linear'
+                spatial_weights{i} = max(0, 1 - patch_distances / decay_distance);
+            case 'exponential'
+                tau = decay_distance / log(2);
+                spatial_weights{i} = exp(-patch_distances / tau);
+            otherwise
+                warning('seal_generate_source_activity:UnknownDecayModel', ...
+                    'Unknown decay_model "%s". Falling back to Gaussian.', decay_model);
+                sigma2 = decay_distance.^2 / log(2);
+                spatial_weights{i} = exp(-patch_distances.^2 / sigma2);
+        end
     end
- 
-    spatial_weights{i} = w;
+    % Add the activity of the current patch to the main source matrix 'S'.
+    % Using addition allows for the linear superposition of overlapping patches.
+%     S(patch_indices, :) = S(patch_indices, :) + waveform;
 end
 
 if simu_corr == 1
     switch correlated_setting.type
         case 'correlated'
-            corr_mat = chol(correlated_setting.Coef)';
-            simulated_series = orth(simulated_series')';
-            simulated_series = corr_mat*simulated_series;
+            corr_mat = seal_make_positive_definite(correlated_setting.Coef, numel(ROIs));
+            simulated_series = seal_apply_correlation(simulated_series, corr_mat);
             
         case 'causal'
-            causal_mat = correlated_setting.Coef;
-            spec = svd(causal_mat); spec = max(abs(spec));
-            if spec >= 1
-                causal_mat = causal_mat*0.95 / spec;
-            end
-            simulated_series = causal_mat*simulated_series;
+            simulated_series = seal_apply_causal_mixing(simulated_series, correlated_setting.Coef);
         otherwise
             warning('undefined simulation type (correlated/causal), use default settings');
             
@@ -180,10 +169,90 @@ for i = 1:numel(ROIs)
     S(patch_indices, :) = S(patch_indices, :) + weight.*waveform;
 end
 
+metadata = struct();
+metadata.n_sources = n_sources;
+metadata.n_time_points = n_time_points;
+metadata.coordinate_unit_scale_to_mm = coord_to_mm;
+metadata.random_seed = [];
+if isfield(options, 'random_seed')
+    metadata.random_seed = options.random_seed;
+end
+metadata.seed_vertices = arrayfun(@(x) x.seedvox, ROIs);
+metadata.active_indices = active_indices;
+metadata.spatial_weights = spatial_weights;
+metadata.correlated_setting = correlated_setting;
 
+if restore_rng
+    rng(old_rng);
+end
 
+end
 
+function coord_to_mm = seal_coordinate_scale_to_mm(vertices)
+% Treat small-coordinate surfaces as meters and convert distances to mm.
+if max(abs(vertices(:))) < 10
+    coord_to_mm = 1000;
+else
+    coord_to_mm = 1;
+end
+end
 
+function patch_area_mm2 = seal_resolve_patch_area_mm2(roi)
+if isfield(roi, 'patch_area_mm2') && ~isempty(roi.patch_area_mm2)
+    patch_area_mm2 = roi.patch_area_mm2;
+    return;
+end
+if isfield(roi, 'extent_type') && any(strcmpi(roi.extent_type, {'radius', 'radius_mm'}))
+    patch_area_mm2 = pi * roi.extent^2;
+else
+    patch_area_mm2 = roi.extent;
+end
+end
+
+function corr_mat = seal_make_positive_definite(coef, n_roi)
+corr_mat = double(coef);
+if ~isequal(size(corr_mat), [n_roi, n_roi])
+    error('correlated_setting.Coef must be nROI x nROI.');
+end
+corr_mat = (corr_mat + corr_mat') / 2;
+corr_mat(1:n_roi+1:end) = 1;
+[V, D] = eig(corr_mat);
+eig_vals = max(diag(D), 1e-6);
+corr_mat = V * diag(eig_vals) * V';
+d = sqrt(diag(corr_mat));
+corr_mat = corr_mat ./ (d * d');
+end
+
+function mixed = seal_apply_correlation(series, corr_mat)
+mu = mean(series, 2);
+sigma = std(series, 0, 2);
+sigma(sigma < eps) = 1;
+z = (series - mu) ./ sigma;
+L = chol(corr_mat, 'lower');
+mixed = L * z;
+mixed = mixed .* sigma + mu;
+end
+
+function mixed = seal_apply_causal_mixing(series, coef)
+n_roi = size(series, 1);
+causal_mat = double(coef);
+if ~isequal(size(causal_mat), [n_roi, n_roi])
+    error('causal correlated_setting.Coef must be nROI x nROI.');
+end
+spec = max(abs(eig(causal_mat)));
+if spec >= 0.95
+    causal_mat = causal_mat * (0.95 / spec);
+end
+mixed = zeros(size(series));
+mixed(:, 1) = series(:, 1);
+for t = 2:size(series, 2)
+    mixed(:, t) = series(:, t) + causal_mat * mixed(:, t - 1);
+end
+mu = mean(series, 2);
+sigma = std(series, 0, 2);
+out_sigma = std(mixed, 0, 2);
+out_sigma(out_sigma < eps) = 1;
+mixed = (mixed - mean(mixed, 2)) ./ out_sigma .* sigma + mu;
 end
 
 

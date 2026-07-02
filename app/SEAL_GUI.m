@@ -75,6 +75,48 @@ classdef SEAL_GUI < matlab.apps.AppBase
     methods (Access = private)
         % 核心函数：向文本区域添加内容
 
+        function QuickSourceImagingMenuSelected(app, ~)
+            filterSpec = { ...
+                '*.mat', 'MATLAB package (*.mat)'; ...
+                '*.*',   'All Files (*.*)'};
+            [fileName, filePath] = uigetfile(filterSpec, ...
+                'Select Quick Source Imaging Package');
+
+            if isequal(fileName, 0)
+                app.appendOutput('Quick Source Imaging cancelled.');
+                return;
+            end
+
+            packagePath = fullfile(filePath, fileName);
+            progressDlg = uiprogressdlg(app.UIFigure, ...
+                'Title', 'Quick Source Imaging', ...
+                'Message', 'Loading package and running default source imaging...', ...
+                'Indeterminate', 'on', ...
+                'Cancelable', 'off');
+            drawnow;
+
+            try
+                out = seal_runQuickSourceImaging(packagePath, 'OpenFigure', true);
+                if isvalid(progressDlg)
+                    close(progressDlg);
+                end
+
+                msg = sprintf('Quick Source Imaging completed.\nAlgorithm: %s\nResult: %s', ...
+                    out.Algorithm, out.ResultPath);
+                app.appendOutput(msg);
+                uialert(app.UIFigure, sprintf(['Quick Source Imaging completed!\n\n', ...
+                    'Algorithm: %s\n\nResult:\n%s'], out.Algorithm, out.ResultPath), ...
+                    'Quick Source Imaging', 'Icon', 'success');
+            catch ME
+                if exist('progressDlg', 'var') && isvalid(progressDlg)
+                    close(progressDlg);
+                end
+                app.appendOutput(['Quick Source Imaging failed: ', ME.message]);
+                uialert(app.UIFigure, getReport(ME, 'basic', 'hyperlinks', 'off'), ...
+                    'Quick Source Imaging Failed', 'Icon', 'error');
+            end
+        end
+
         function ImportDataSelected(app, dataType)
             % Get the currently selected protocol node
             selectedNode = app.FileTree.SelectedNodes;
@@ -1488,7 +1530,57 @@ end
             s = ResultNode.sourceActivity;
             active_indices= SimuInfo.activeIndices;
             seedvox = SimuInfo.SourceData.SeedVertices;
-            s_energy = sqrt(sum(s.^2, 2));   % 用 RMS 而非能量
+            nTime = size(s, 2);
+            eval_mask = true(1, nTime);
+            eval_time = [];
+            if nTime > 1
+                if isfield(SimuInfo, 'time_vector') && numel(SimuInfo.time_vector) == nTime
+                    eval_time = double(SimuInfo.time_vector(:))';
+                elseif isfield(SimuInfo, 'time_range') && isfield(SimuInfo, 'srate') && ...
+                        ~isempty(SimuInfo.time_range) && ~isempty(SimuInfo.srate)
+                    t0 = double(SimuInfo.time_range(1));
+                    fs = double(SimuInfo.srate);
+                    eval_time = t0 + (0:nTime-1) ./ fs;
+                end
+            end
+
+            if ~isempty(eval_time)
+                default_start = eval_time(1);
+                default_end = eval_time(end);
+                answer = inputdlg( ...
+                    {'Evaluation start time (s):', 'Evaluation end time (s):'}, ...
+                    'Evaluation Time Window', [1 45], ...
+                    {num2str(default_start, '%.9g'), num2str(default_end, '%.9g')});
+                if isempty(answer)
+                    return;
+                end
+
+                win_start = str2double(answer{1});
+                win_end = str2double(answer{2});
+                if ~isfinite(win_start) || ~isfinite(win_end) || win_start > win_end
+                    uialert(app.UIFigure, '请输入有效的时间窗, 且起点不能大于终点。', ...
+                        'Invalid Time Window', 'Icon', 'error');
+                    return;
+                end
+
+                eval_mask = eval_time >= win_start & eval_time <= win_end;
+                if ~any(eval_mask)
+                    uialert(app.UIFigure, '所选时间窗内没有采样点。', ...
+                        'Invalid Time Window', 'Icon', 'error');
+                    return;
+                end
+
+                fprintf('[Evaluation] Time window: %.6g to %.6g s (%d/%d samples)\n', ...
+                    min(eval_time(eval_mask)), max(eval_time(eval_mask)), sum(eval_mask), nTime);
+            end
+
+            if isvector(s)
+                s_eval = double(s(:));
+                s_energy = abs(s_eval);
+            else
+                s_eval = double(s(:, eval_mask));
+                s_energy = sqrt(sum(abs(s_eval).^2, 2));
+            end
             if iscell(active_indices)
                 active_indices = cellfun(@(x) x(:), active_indices(:), 'UniformOutput', false);
                 true_idx = unique(vertcat(active_indices{:}));
@@ -1496,6 +1588,18 @@ end
                 true_idx = unique(active_indices(:));
                 active_indices = {true_idx};
             end
+
+%             m = sum(s.^2, 2);
+%             thr = 0.1 * max(m);
+%             est_idx = find(m >= thr);
+
+%             fprintf('max=%g\n', max(m));
+%             fprintf('true vertices=%d\n', numel(true_idx));
+%             fprintf('estimated vertices above 0.1 max=%d\n', numel(est_idx));
+%             fprintf('overlap=%d\n', numel(intersect(est_idx, true_idx)));
+%             [~, pk] = max(m);
+%             fprintf('peak index=%d, peak in true=%d\n', pk, ismember(pk,true_idx));
+
             disttype = 'euclidean'; % 'geodesic'
             threshold = 0.1;
             metrics_to_compute = {'DLE','SD','EMD','ROC_AUC','PR_AUC','F1','Precision','Recall','APrime'};
@@ -1503,13 +1607,29 @@ end
             has_true_source = isfield(SimuInfo, 's_real') && ~isempty(SimuInfo.s_real);
 
             if has_true_source
-                metric_args = [metric_args, {'EMDTrueDistribution', sqrt(sum(SimuInfo.s_real.^2, 2))}];
+                s_real = double(SimuInfo.s_real);
+                if isvector(s_real)
+                    s_real_eval = s_real(:);
+                    true_distribution = abs(s_real_eval);
+                else
+                    if size(s_real, 2) == nTime
+                        s_real_eval = s_real(:, eval_mask);
+                    else
+                        s_real_eval = s_real;
+                        warning('SEAL:Evaluation:TimeLengthMismatch', ...
+                            's_real time length (%d) does not match sourceActivity (%d); using full s_real for true distribution.', ...
+                            size(s_real, 2), nTime);
+                    end
+                    true_distribution = sqrt(sum(abs(s_real_eval).^2, 2));
+                end
+                metric_args = [metric_args, {'EMDTrueDistribution', true_distribution}];
             end
 
-            if has_true_source && ~isvector(s)
+            if has_true_source && ~isvector(s) && exist('s_real_eval', 'var') && ...
+                    ~isvector(s_real_eval) && size(s_eval, 2) == size(s_real_eval, 2)
                 metrics_to_compute{end+1} = 'MSE';
-                metric_args = [metric_args, {'EstimatedSourceTimeSeries', s, ...
-                    'TrueSourceTimeSeries', SimuInfo.s_real, ...
+                metric_args = [metric_args, {'EstimatedSourceTimeSeries', s_eval, ...
+                    'TrueSourceTimeSeries', s_real_eval, ...
                     'TemporalRoiIndices', active_indices}];
             else
                 warning('SEAL:Evaluation:MissingTrueSourceTimeSeries', ...
@@ -1560,6 +1680,11 @@ end
             app.ImportprotocolMenu = uimenu(app.FileMenu);
             app.ImportprotocolMenu.MenuSelectedFcn = createCallbackFcn(app, @ImportprotocolMenuSelected, true);
             app.ImportprotocolMenu.Text = 'Import protocol';
+
+            quickSourceMenu = uimenu(app.FileMenu);
+            quickSourceMenu.MenuSelectedFcn = createCallbackFcn(app, @QuickSourceImagingMenuSelected, true);
+            quickSourceMenu.Separator = 'on';
+            quickSourceMenu.Text = 'Quick Source Imaging...';
 
             % Create HelpMenu
             app.HelpMenu = uimenu(app.UIFigure);

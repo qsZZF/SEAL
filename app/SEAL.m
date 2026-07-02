@@ -1,7 +1,7 @@
 function app = SEAL()
 %SEAL  Launch SEAL Toolbox GUI
 %   在 MATLAB 命令行输入 SEAL 即可启动主界面,模仿 EEGLAB 的启动方式。
-
+    clc;
     % 1. 把 SEAL 根目录加入 path(保证无论在哪个目录都能找到依赖)
     sealRoot = fileparts(mfilename('fullpath'));
     addpath(sealRoot);

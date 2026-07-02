@@ -38,6 +38,8 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
 %                                     Default: 0.1 (relative).
 %       'NumStepsROC' (integer): Number of threshold steps for the auxiliary
 %                                     spatially balanced ROC. Default: 100.
+%       'NumStepsPR' (integer): Number of relative threshold steps for
+%                                     PR AUC. Default: 100.
 %       'RepsROC' (integer): Number of repetitions for the auxiliary
 %                                     spatially balanced ROC. Default: 50.
 %       'OrderROC' (integer): Max neighbor order for its close field. Default: 6.
@@ -91,6 +93,7 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
     addParameter(p, 'DistanceType', 'euclidean', @(x) ismember(lower(x), {'euclidean', 'geodesic'}));
     addParameter(p, 'ThresholdBinary', 0.1, @(x) (isnumeric(x) && isscalar(x)) || (ischar(x) || isstring(x)));
     addParameter(p, 'NumStepsROC', 100, @(x) isnumeric(x) && isscalar(x) && x > 1);
+    addParameter(p, 'NumStepsPR', 100, @(x) isnumeric(x) && isscalar(x) && x > 1);
     addParameter(p, 'RepsROC', 50, @(x) isnumeric(x) && isscalar(x) && x >= 1);
     addParameter(p, 'OrderROC', 6, @(x) isnumeric(x) && isscalar(x) && x >= 0);
     addParameter(p, 'EMDLambda', 1, @(x) isnumeric(x) && isscalar(x) && x > 0);
@@ -258,7 +261,8 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
     %% PR AUC Calculation
     if any(strcmpi('pr_auc', metricsToCompute))
         try
-            [pr_auc_val, pr_curve_val, param_pr] = compute_pr_auc(s_est_abs, true_active_idx_input);
+            [pr_auc_val, pr_curve_val, param_pr] = compute_pr_auc( ...
+                s_est_abs, true_active_idx_input, p.Results.NumStepsPR);
             Results.PR_AUC = pr_auc_val;
             Results.AveragePrecision = pr_auc_val;
             Results.PR_Curve = pr_curve_val;
@@ -644,38 +648,71 @@ function [auc_roc, tpr_fpr_curve, ParamROC_local] = compute_spatially_balanced_r
     ParamROC_local.Mean_TPR = mean_tpr; ParamROC_local.Mean_FPR = mean_fpr;
 end
 
-function [auc_pr, precision_recall_curve, ParamPR_local] = compute_pr_auc(s_est_abs, true_active_idx)
-    % Exact non-interpolated average precision using all unique scores.
+function [auc_pr, precision_recall_curve, ParamPR_local] = compute_pr_auc(s_est_abs, true_active_idx, num_steps)
+    % Relative-threshold PR AUC compatible with ESIspatialMetric.m.
+    if nargin < 3 || isempty(num_steps)
+        num_steps = 100;
+    end
+    num_steps = round(num_steps);
     num_sources = numel(s_est_abs);
     labels = false(num_sources, 1);
     labels(true_active_idx) = true;
     num_positive = sum(labels);
-    ParamPR_local = struct('Method', 'exact_average_precision', ...
-        'NumPositive', num_positive, 'NumNegative', num_sources - num_positive);
+    ParamPR_local = struct('Method', 'relative_threshold_trapezoid', ...
+        'NumPositive', num_positive, ...
+        'NumNegative', num_sources - num_positive, ...
+        'NumSteps', num_steps, ...
+        'NormalizedByRecallRange', true);
     if num_positive == 0
         auc_pr = NaN;
         precision_recall_curve = [NaN NaN; NaN NaN];
         return;
     end
 
-    [scores_descending, order] = sort(s_est_abs, 'descend');
-    labels_descending = labels(order);
-    group_end = [find(diff(scores_descending) ~= 0); num_sources];
-    group_start = [1; group_end(1:end-1) + 1];
-    positives_per_group = zeros(numel(group_end), 1);
-    for i_group = 1:numel(group_end)
-        positives_per_group(i_group) = sum(labels_descending( ...
-            group_start(i_group):group_end(i_group)));
+    max_s_est = max(s_est_abs);
+    thresholds = ((0:num_steps)' / num_steps) * max_s_est;
+    precision = zeros(num_steps + 1, 1);
+    recall = zeros(num_steps + 1, 1);
+
+    if max_s_est <= eps
+        auc_pr = 0;
+        precision_recall_curve = [recall, precision];
+        ParamPR_local.Thresholds = thresholds;
+        ParamPR_local.PrecisionValues = precision;
+        ParamPR_local.RecallValues = recall;
+        return;
     end
 
-    cumulative_positive = cumsum(positives_per_group);
-    recall = cumulative_positive / num_positive;
-    precision = cumulative_positive ./ group_end;
-    precision_recall_curve = [[0; recall], [1; precision]];
-    auc_pr = sum(diff([0; recall]) .* precision);
-    ParamPR_local.Thresholds = scores_descending(group_start);
-    ParamPR_local.PrecisionValues = precision;
-    ParamPR_local.RecallValues = recall;
+    for i_step = 1:(num_steps + 1)
+        threshold = thresholds(i_step);
+        if threshold == 0
+            estimated_positive = s_est_abs > 0;
+        else
+            estimated_positive = s_est_abs >= threshold;
+        end
+
+        num_estimated_positive = sum(estimated_positive);
+        true_positive = sum(labels & estimated_positive);
+        if num_estimated_positive > 0
+            precision(i_step) = true_positive / num_estimated_positive;
+        else
+            precision(i_step) = 0;
+        end
+        recall(i_step) = true_positive / num_positive;
+    end
+
+    [recall_sorted, order] = sort(recall);
+    precision_sorted = precision(order);
+    thresholds_sorted = thresholds(order);
+    recall_range = max(recall_sorted) - min(recall_sorted);
+    auc_pr = sum(diff(recall_sorted) .* ...
+        (precision_sorted(1:end-1) + precision_sorted(2:end))) / 2 / ...
+        (recall_range + 1e-12);
+
+    precision_recall_curve = [recall_sorted, precision_sorted];
+    ParamPR_local.Thresholds = thresholds_sorted;
+    ParamPR_local.PrecisionValues = precision_sorted;
+    ParamPR_local.RecallValues = recall_sorted;
 end
 
 function aprime_val = compute_aprime(hit_rate, false_alarm_rate)

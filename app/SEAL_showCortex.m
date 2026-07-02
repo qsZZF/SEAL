@@ -34,6 +34,9 @@ classdef SEAL_showCortex < matlab.apps.AppBase
         ColorButton          matlab.ui.control.Button
         TranspSlider         matlab.ui.control.Slider
         TranspLabel          matlab.ui.control.Label
+        ThresholdSlider      matlab.ui.control.Slider
+        ThresholdLabel       matlab.ui.control.Label
+        ThresholdEdit        matlab.ui.control.NumericEditField
         SmoothSlider         matlab.ui.control.Slider
         SmoothLabel          matlab.ui.control.Label
         Transpedit           matlab.ui.control.NumericEditField
@@ -75,6 +78,9 @@ classdef SEAL_showCortex < matlab.apps.AppBase
         SourceColorMap = []
         SourceDisplayScale = 1
         SourceDisplayUnits = ''
+        CurrentSourceData = []
+        CurrentSourceRGB = []
+        CurrentUseGlobalLimit = true
 
         figOffset       % 图像窗口相对 App 的偏移 [dx, dy]
         lastFigPos      % 上次图像窗口位置
@@ -291,6 +297,10 @@ classdef SEAL_showCortex < matlab.apps.AppBase
                 useGlobalLimit = true;
             end
 
+            app.CurrentSourceData = sourceData;
+            app.CurrentSourceRGB = rgb;
+            app.CurrentUseGlobalLimit = useGlobalLimit;
+
             [sourceData, colorMap, colorLimit, threshold] = app.sourceDisplayArgs(sourceData, useGlobalLimit);
             plotArgs = {};
             if ~isempty(colorLimit)
@@ -316,6 +326,65 @@ classdef SEAL_showCortex < matlab.apps.AppBase
                 rgb = [];
             end
             app.redrawSourceData(app.resultData(:, colIdx), rgb);
+        end
+
+        function value = clampSourceThreshold(app, value)
+            if isempty(value) || ~isnumeric(value) || ~all(isfinite(value(:)))
+                value = app.SourceDataThreshold;
+            end
+            if isempty(value) || ~isnumeric(value) || ~all(isfinite(value(:)))
+                value = 0.5;
+            end
+            value = max(0, min(1, double(value(1))));
+        end
+
+        function syncSourceThresholdControls(app)
+            value = app.clampSourceThreshold(app.SourceDataThreshold);
+            if ~isempty(app.ThresholdSlider) && isvalid(app.ThresholdSlider)
+                app.ThresholdSlider.Value = value;
+            end
+            if ~isempty(app.ThresholdEdit) && isvalid(app.ThresholdEdit)
+                app.ThresholdEdit.Value = value;
+            end
+        end
+
+        function setSourceThresholdControlsEnabled(app, isEnabled)
+            if isEnabled
+                enableState = 'on';
+            else
+                enableState = 'off';
+            end
+            if ~isempty(app.ThresholdSlider) && isvalid(app.ThresholdSlider)
+                app.ThresholdSlider.Enable = enableState;
+            end
+            if ~isempty(app.ThresholdEdit) && isvalid(app.ThresholdEdit)
+                app.ThresholdEdit.Enable = enableState;
+            end
+        end
+
+        function refreshCurrentSourceDisplay(app)
+            if isempty(app.CurrentSourceData) || isempty(app.handles1) || ...
+                    ~isfield(app.handles1, 'hp') || ~isvalid(app.handles1.hp)
+                return;
+            end
+            app.redrawSourceData(app.CurrentSourceData, ...
+                app.CurrentSourceRGB, app.CurrentUseGlobalLimit);
+        end
+
+        function setSourceThreshold(app, value, sourceControl)
+            if nargin < 3
+                sourceControl = '';
+            end
+            app.SourceDataThreshold = app.clampSourceThreshold(value);
+            if ~strcmp(sourceControl, 'slider') && ...
+                    ~isempty(app.ThresholdSlider) && isvalid(app.ThresholdSlider)
+                app.ThresholdSlider.Value = app.SourceDataThreshold;
+            end
+            if ~strcmp(sourceControl, 'edit') && ...
+                    ~isempty(app.ThresholdEdit) && isvalid(app.ThresholdEdit)
+                app.ThresholdEdit.Value = app.SourceDataThreshold;
+            end
+            app.refreshCurrentSourceDisplay();
         end
 
         function stopPositionTimer(app)
@@ -1219,6 +1288,9 @@ end
                 app.handles1=PlotSource([],app.cortexData,'smooth',app.smoothvalue, ...
                     'Position',[screenSize(3)*0.3,screenSize(4)*0.4 800, 600]);
                 app.jump2signalButton.Enable="off";
+                app.SourceDataThreshold = 0.5;
+                app.syncSourceThresholdControls();
+                app.setSourceThresholdControlsEnabled(false);
                 app.smoothedVC=seal_getSmoothedVertices(app.cortexData.Vertices, app.cortexData.VertConn, app.smoothvalue);
                 xrange = [min(app.smoothedVC(:,1)) max(app.smoothedVC(:,1))];
                 yrange = [min(app.smoothedVC(:,2)) max(app.smoothedVC(:,2))];
@@ -1284,6 +1356,8 @@ end
                 end
 
                 app.configureSourceDisplay(data);
+                app.syncSourceThresholdControls();
+                app.setSourceThresholdControlsEnabled(true);
                 app.TimeVector = app.resolveResultTimeVector(data, params, size(app.resultData, 2));
                 if ~isempty(app.TimeVector) && any(app.TimeVector <= 0) && any(app.TimeVector >= 0)
                     [~, initCol] = min(abs(app.TimeVector));
@@ -1292,13 +1366,17 @@ end
                 end
                 app.TimePointEditField.Value = app.TimeVector(initCol);
 
-                [initSource, initMap, initCLim, initThresh] = app.sourceDisplayArgs(app.resultData(:, initCol));
+                initRawSource = app.resultData(:, initCol);
+                [initSource, initMap, initCLim, initThresh] = app.sourceDisplayArgs(initRawSource);
                 app.handles1=PlotSource(initSource,app.cortexData,'smooth',app.smoothvalue, ...
                     'displaymode', app.SourceDisplayMode, ...
                     'colormap', initMap, ...
                     'clim', initCLim, ...
                     'thresh', initThresh, ...
                     'Position',[screenSize(3)*0.3,screenSize(4)*0.4 800, 600]);
+                app.CurrentSourceData = initRawSource;
+                app.CurrentSourceRGB = [];
+                app.CurrentUseGlobalLimit = true;
                 app.updateSourceColorbarLabel();
             end
             seal_bind3DInteraction(app.handles1.h, app.handles1.axes,  @(src,evt) app.vertexClicked(src,evt));
@@ -1413,6 +1491,16 @@ end
             % 更新顶点，不新建窗口
             set(app.handles1.hp, 'Vertices', app.smoothedVC);
 
+        end
+
+        % Value changed function: ThresholdSlider
+        function ThresholdSliderValueChanged(app, event)
+            app.setSourceThreshold(app.ThresholdSlider.Value, 'slider');
+        end
+
+        % Value changed function: ThresholdEdit
+        function ThresholdEditValueChanged(app, event)
+            app.setSourceThreshold(app.ThresholdEdit.Value, 'edit');
         end
 
         % Value changed function: TranspSlider
@@ -1627,7 +1715,14 @@ end
             % Create Transpedit
             app.Transpedit = uieditfield(app.SurfaceoprionsPanel, 'numeric');
             app.Transpedit.ValueChangedFcn = createCallbackFcn(app, @TranspeditValueChanged, true);
-            app.Transpedit.Position = [260 67 44 22];
+            app.Transpedit.Position = [260 53 44 22];
+
+            % Create ThresholdEdit
+            app.ThresholdEdit = uieditfield(app.SurfaceoprionsPanel, 'numeric');
+            app.ThresholdEdit.Limits = [0 1];
+            app.ThresholdEdit.ValueChangedFcn = createCallbackFcn(app, @ThresholdEditValueChanged, true);
+            app.ThresholdEdit.Position = [260 87 44 22];
+            app.ThresholdEdit.Value = 0.5;
 
             % Create SmoothLabel
             app.SmoothLabel = uilabel(app.SurfaceoprionsPanel);
@@ -1643,17 +1738,31 @@ end
             app.SmoothSlider.Position = [99 130 150 3];
             app.SmoothSlider.Value = 1;
 
+            % Create ThresholdLabel
+            app.ThresholdLabel = uilabel(app.SurfaceoprionsPanel);
+            app.ThresholdLabel.HorizontalAlignment = 'right';
+            app.ThresholdLabel.Position = [13 87 73 22];
+            app.ThresholdLabel.Text = 'Threshold';
+
+            % Create ThresholdSlider
+            app.ThresholdSlider = uislider(app.SurfaceoprionsPanel);
+            app.ThresholdSlider.Limits = [0 1];
+            app.ThresholdSlider.MajorTicks = [0 0.25 0.5 0.75 1];
+            app.ThresholdSlider.ValueChangedFcn = createCallbackFcn(app, @ThresholdSliderValueChanged, true);
+            app.ThresholdSlider.Position = [100 97 150 3];
+            app.ThresholdSlider.Value = 0.5;
+
             % Create TranspLabel
             app.TranspLabel = uilabel(app.SurfaceoprionsPanel);
             app.TranspLabel.HorizontalAlignment = 'right';
-            app.TranspLabel.Position = [25 67 61 22];
+            app.TranspLabel.Position = [25 53 61 22];
             app.TranspLabel.Text = 'Transp(%)';
 
             % Create TranspSlider
             app.TranspSlider = uislider(app.SurfaceoprionsPanel);
             app.TranspSlider.Limits = [0 1];
             app.TranspSlider.ValueChangedFcn = createCallbackFcn(app, @TranspSliderValueChanged, true);
-            app.TranspSlider.Position = [100 77 150 3];
+            app.TranspSlider.Position = [100 63 150 3];
 
             % Create ColorButton
             app.ColorButton = uibutton(app.SurfaceoprionsPanel, 'push');
