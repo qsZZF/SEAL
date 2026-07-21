@@ -11,18 +11,18 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
 %       L (double matrix): Nchannels x Nsources original lead field matrix (G).
 %
 %   Optional Name-Value Pair Inputs:
-%       'Alpha' (double): Regularization parameter (0-100). Default: 50.
-%       'NumIRMXNEIter' (integer): Number of reweighting iterations. Default: 5.
+%       'Alpha' (double): Regularization parameter (0-100). Default: 10.
+%       'NumIRMXNEIter' (integer): Number of reweighting iterations. Default: 15.
 %       'NumOrientations' (integer): Number of orientations per source location. Default: 1.
 %       'NoiseCovariance' (double matrix): C_noise. Default: eye(Nchannels).
-%       'DepthBiasComp' (struct): Default: struct('exponent', 0.8, 'limit', 10.0).
+%       'DepthBiasComp' (struct): Default: struct('exponent', 0.5, 'limit', 10.0).
 %       'Weights' (vector/struct): External spatial weights. Default: [].
 %       'WeightsMin' (scalar): Default: 0.0.
-%       'SolverMaxIter' (integer): Max iterations for inner BCD solver. Default: 1000.
+%       'SolverMaxIter' (integer): Max iterations for inner BCD solver. Default: 3000.
 %       'SolverTolerance' (double): Convergence tolerance for inner BCD. Default: 1e-4.
-%       'IRMXNETolerance' (double): Tolerance for outer X change. Default: 1e-4.
+%       'IRMXNETolerance' (double): Tolerance for outer infinity-norm X change. Default: 1e-6.
 %       'IRMXNEMinIter' (integer): Minimum outer iterations before convergence check. Default: 2.
-%       'Debias' (logical): Perform amplitude debiasing after iterations. Default: true.
+%       'Debias' (logical): Perform amplitude debiasing after iterations. Default: false.
 %       'DebiasMaxIter' (integer): Default: 1000.
 %       'DebiasTolerance' (double): Default: 1e-7.
 %       'PCAWhitening' (logical/integer): Default: true.
@@ -42,18 +42,18 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
     p.CaseSensitive = false;
     p.KeepUnmatched = false;
 
-    defaultAlpha = 50.0;
-    defaultNumIRMXNEIter = 5;
+    defaultAlpha = 10.0;
+    defaultNumIRMXNEIter = 15;
     if size(L,1) > 0, defaultNoiseCov = eye(size(L,1)); else, defaultNoiseCov = []; end
     defaultNumOrientations = 1;
     defaultDepthBiasComp = struct('exponent', 0.5, 'limit', 10.0); 
     defaultWeights = [];
     defaultWeightsMin = 0.0;
-    defaultSolverMaxIter = 1000;
+    defaultSolverMaxIter = 3000;
     defaultSolverTol = 1e-4;
-    defaultIRMXNETol = 1e-4;
+    defaultIRMXNETol = 1e-6;
     defaultIRMXNEMinIter = 2;
-    defaultDebias = true;
+    defaultDebias = false;
     defaultDebiasMaxIter = 1000;
     defaultDebiasTol = 1e-7;
     defaultPCAWhitening = true;
@@ -74,13 +74,13 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
     addParameter(p, 'SolverTolerance', defaultSolverTol, @(x) isnumeric(x) && isscalar(x) && x>0);
     addParameter(p, 'IRMXNETolerance', defaultIRMXNETol, @(x) isnumeric(x) && isscalar(x) && x>0);
     addParameter(p, 'IRMXNEMinIter', defaultIRMXNEMinIter, @(x) isnumeric(x) && isscalar(x) && x>=1);
-    addParameter(p, 'Debias', defaultDebias, @islogical);
+    addParameter(p, 'Debias', defaultDebias, @isLogicalLike);
     addParameter(p, 'DebiasMaxIter', defaultDebiasMaxIter, @(x) isnumeric(x) && isscalar(x) && x>0);
     addParameter(p, 'DebiasTolerance', defaultDebiasTol, @(x) isnumeric(x) && isscalar(x) && x>0);
     addParameter(p, 'PCAWhitening', defaultPCAWhitening);
     addParameter(p, 'RankNoiseCov', defaultRankNoiseCov, @(x) (isnumeric(x) && isscalar(x) && x>0) || isempty(x));
     addParameter(p, 'PickOri', defaultPickOri, @(x) ischar(x) || isstring(x));
-    addParameter(p, 'Verbose', true, @(x) islogical(x) || isnumeric(x));
+    addParameter(p, 'Verbose', true, @isLogicalLike);
 
     parse(p, Data, L, varargin{:});
     Param_irMxNE.OptionsPassed = p.Results;
@@ -90,15 +90,17 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
     nd = p.Results.NumOrientations; C_noise = p.Results.NoiseCovariance;
     depth_params = p.Results.DepthBiasComp; user_weights_input = p.Results.Weights;
     user_weights_min = p.Results.WeightsMin; solver_max_iter = p.Results.SolverMaxIter;
-    solver_tol = p.Results.SolverTolerance; perform_debias = p.Results.Debias;
+    solver_tol = p.Results.SolverTolerance; perform_debias = localToLogical(p.Results.Debias);
     debias_max_iter = p.Results.DebiasMaxIter; debias_tol = p.Results.DebiasTolerance;
     pca_whitening_opt = p.Results.PCAWhitening; rank_noise_cov_opt = p.Results.RankNoiseCov;
     pick_ori_opt = lower(char(p.Results.PickOri));
     n_irmxne_iter = p.Results.NumIRMXNEIter;
     irmxne_tol = p.Results.IRMXNETolerance;
     irmxne_min_iter = p.Results.IRMXNEMinIter;
-    verbose = logical(p.Results.Verbose);
+    verbose = localToLogical(p.Results.Verbose);
     local_check_option(pick_ori_opt, {'none', 'vector'});
+    Param_irMxNE.OptionsPassed.Debias = perform_debias;
+    Param_irMxNE.OptionsPassed.Verbose = verbose;
 
     [Nchan, Nt] = size(Y_orig); [Nchan_L, Nsources_total] = size(G_orig);
     if mod(Nsources_total, nd) ~= 0, error('seal_irMxNE:NDMismatch', 'L Nsources not divisible by NumOrientations.'); end
@@ -138,11 +140,22 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
     Param_irMxNE.WhiteningMatrix = iW;
 
     M_processed = Y_w; Vh_pca = [];
-    if pca_whitening_opt
+    if islogical(pca_whitening_opt) || ischar(pca_whitening_opt) || isstring(pca_whitening_opt) || ...
+            (isnumeric(pca_whitening_opt) && isscalar(pca_whitening_opt) && ...
+            (pca_whitening_opt == 0 || pca_whitening_opt == 1))
+        do_pca = localToLogical(pca_whitening_opt);
         pca_rank = rank_whitener;
-        if isnumeric(pca_whitening_opt) && ~islogical(pca_whitening_opt), pca_rank = min(pca_whitening_opt, rank_whitener); end
-        if pca_rank < size(M_processed,1)
-            if verbose, fprintf('irMxNE: Applying PCA to whitened data, reducing to rank %d\n', pca_rank); end
+    else
+        do_pca = true;
+        pca_rank = min(round(double(pca_whitening_opt)), rank_whitener);
+    end
+    if do_pca
+        pca_rank = min([pca_rank, size(M_processed, 1), size(M_processed, 2)]);
+        if pca_rank < size(M_processed, 2)
+            if verbose
+                fprintf('irMxNE: Temporal PCA reduced time samples from %d to %d.\n', ...
+                    size(M_processed, 2), pca_rank);
+            end
             [U_data, S_data_mat, V_data] = svd(M_processed, 'econ');
             M_processed = U_data(:, 1:pca_rank) * S_data_mat(1:pca_rank, 1:pca_rank);
             Vh_pca = V_data(:, 1:pca_rank)';
@@ -214,26 +227,46 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
         fprintf('irMxNE: Starting iterative reweighted L1/L2 solution (max %d outer iterations)...\n', n_irmxne_iter);
     end
     
+    inner_gap_freq = min(50, max(1, round(solver_max_iter / 10)));
     X_active_iter_pca = zeros(size(G_solver,2), size(M_processed,2));
     current_reweighting_weights = ones(size(G_solver,2), 1);
     active_set_bcd = false(size(G_solver,2),1);
     last_outer_iter = 0;
+    Param_irMxNE.ReweightingWeightsPerIter = cell(n_irmxne_iter, 1);
+    Param_irMxNE.ActiveSetPerIter = cell(n_irmxne_iter, 1);
+    Param_irMxNE.OuterChangeInf = nan(n_irmxne_iter, 1);
 
     for k_iter = 1:n_irmxne_iter
         last_outer_iter = k_iter;
         if verbose, fprintf('  irMxNE Iteration %d/%d...\n', k_iter, n_irmxne_iter); end
         X_prev_iter_pca = X_active_iter_pca;
-        
-        % Apply current reweighting to columns of G
-        G_iter_solver = bsxfun(@times, G_solver, current_reweighting_weights');
 
-        [X_solved_at_iter, active_set_at_iter_mask, E_path_bcd, ~, ~] = ...
+        % Eq. (4)-(5): restrict each weighted MxNE subproblem to w_s > 0.
+        iter_comp_mask = current_reweighting_weights > 0;
+        if ~any(iter_comp_mask)
+            if verbose
+                fprintf('    No source has positive reweighting weight. Stopping.\n');
+            end
+            Param_irMxNE.Converged = true;
+            break;
+        end
+        iter_comp_indices = find(iter_comp_mask);
+        G_iter_solver = bsxfun(@times, G_solver(:, iter_comp_indices), ...
+            current_reweighting_weights(iter_comp_indices)');
+        Param_irMxNE.ReweightingWeightsPerIter{k_iter} = current_reweighting_weights;
+
+        [X_solved_at_iter, active_set_at_iter_local, E_path_bcd, ~, ~] = ...
             local_mxne_bcd_solver(M_processed, G_iter_solver, alpha_solver, nd, ...
-                solver_max_iter, solver_tol, max(1,round(solver_max_iter/10)), verbose);
+                solver_max_iter, solver_tol, inner_gap_freq, verbose);
         Param_irMxNE.E_path_per_iter{k_iter} = E_path_bcd;
-        
-        % Recover the "true" X under the original (unreweighted) variable
-        % via the substitution X = diag(w) * X_solved.
+
+        active_set_at_iter_mask = false(size(G_solver, 2), 1);
+        if any(active_set_at_iter_local)
+            active_set_at_iter_mask(iter_comp_indices(active_set_at_iter_local)) = true;
+        end
+        Param_irMxNE.ActiveSetPerIter{k_iter} = find(active_set_at_iter_mask);
+
+        % Recover X_hat = W * X_tilde under the original unreweighted variable.
         X_active_iter_pca_new = zeros(size(G_solver,2), size(M_processed,2));
         if any(active_set_at_iter_mask)
             X_active_iter_pca_new(active_set_at_iter_mask,:) = ...
@@ -242,47 +275,48 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
         X_active_iter_pca = X_active_iter_pca_new;
         active_set_bcd = active_set_at_iter_mask;
 
-        if k_iter < n_irmxne_iter
-            if ~any(active_set_bcd)
-                if verbose
-                    fprintf('    No active sources in irMxNE iteration %d. Stopping reweighting.\n', k_iter);
-                end
-                Param_irMxNE.Converged = true;   % counts as "settled"
-                break; 
+        if ~any(active_set_bcd)
+            if verbose
+                fprintf('    No active sources in irMxNE iteration %d. Stopping reweighting.\n', k_iter);
             end
-            
-            % Update reweighting based on group L2 norms of current X.
-            % This implements the L0.5 majorization-minimization update:
-            %   w_g^{new} = 2 * ||X_g||_F^{1/2}
+            Param_irMxNE.Converged = true;
+            break;
+        end
+
+        % Algorithm 3 stops before computing W^(k+1).
+        if k_iter >= max(2, irmxne_min_iter)
+            change_X = max(abs(X_active_iter_pca(:) - X_prev_iter_pca(:)));
+            Param_irMxNE.OuterChangeInf(k_iter) = change_X;
+            if verbose
+                fprintf('    irMxNE Iter %d: X inf-change = %.2e (Tol=%.1e)\n', ...
+                    k_iter, change_X, irmxne_tol);
+            end
+            if change_X < irmxne_tol
+                if verbose
+                    fprintf('  irMxNE converged (infinity-norm X change) at iteration %d.\n', k_iter);
+                end
+                Param_irMxNE.Converged = true;
+                break;
+            end
+        end
+
+        if k_iter < n_irmxne_iter
+            % Eq. (5): w_s^(k+1) = 2 * sqrt(||X_s^(k)||_F).
+            % Zero-amplitude blocks get zero weight and are removed next pass.
             X_for_gprime = X_active_iter_pca(active_set_bcd, :);
             n_active_pos = size(X_for_gprime, 1) / nd;
             group_L2_norms_sq = local_groups_norm2(X_for_gprime, nd, n_active_pos);
             g_X = sqrt(sqrt(group_L2_norms_sq));         % = ||X_g||_F^{1/2}
             new_reweights_loc = 2.0 * g_X;
-            
-            temp_current_reweighting_weights = ones(size(G_solver,2), 1);
+            new_reweights_loc(~isfinite(new_reweights_loc)) = 0;
+
+            temp_current_reweighting_weights = zeros(size(G_solver,2), 1);
             if nd > 1
                 temp_current_reweighting_weights(active_set_bcd) = repelem(new_reweights_loc, nd);
             else
                 temp_current_reweighting_weights(active_set_bcd) = new_reweights_loc;
             end
             current_reweighting_weights = temp_current_reweighting_weights;
-        end
-        
-        % Outer convergence check (only after IRMXNEMinIter)
-        if k_iter >= max(2, irmxne_min_iter)
-            change_X = norm(X_active_iter_pca(:) - X_prev_iter_pca(:),'fro') / ...
-                       (norm(X_prev_iter_pca(:),'fro') + eps);
-            if verbose
-                fprintf('    irMxNE Iter %d: X change = %.2e (Tol=%.1e)\n', k_iter, change_X, irmxne_tol);
-            end
-            if change_X < irmxne_tol
-                if verbose
-                    fprintf('  irMxNE converged (X change) at iteration %d.\n', k_iter);
-                end
-                Param_irMxNE.Converged = true;
-                break;
-            end
         end
     end
     
@@ -293,6 +327,9 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
                 n_irmxne_iter, irmxne_tol);
     end
     Param_irMxNE.NumIRMXNEIterActual = last_outer_iter;
+    Param_irMxNE.OuterChangeInf = Param_irMxNE.OuterChangeInf(1:last_outer_iter);
+    Param_irMxNE.ReweightingWeightsPerIter = Param_irMxNE.ReweightingWeightsPerIter(1:last_outer_iter);
+    Param_irMxNE.ActiveSetPerIter = Param_irMxNE.ActiveSetPerIter(1:last_outer_iter);
     
     X_solved_active_pca = X_active_iter_pca(active_set_bcd,:);
     final_active_set_mask_in_G_solver_space = active_set_bcd;
@@ -304,8 +341,10 @@ function [Source_irMxNE, Param_irMxNE] = seal_irMxNE(Data, L, varargin)
         G_for_debias = G_solver(:, final_active_set_mask_in_G_solver_space);
         debiasing_weights = local_compute_bias(M_processed, G_for_debias, X_solved_active_pca, nd, ...
                                                debias_max_iter, debias_tol, verbose);
-        X_debiased_active_pca = X_solved_active_pca .* debiasing_weights;
+        X_debiased_active_pca = bsxfun(@times, X_solved_active_pca, debiasing_weights);
         Param_irMxNE.DebiasingWeights = debiasing_weights;
+    else
+        Param_irMxNE.DebiasingWeights = [];
     end
 
     %% 5. Reconstruct full time series if PCA was used
@@ -356,6 +395,7 @@ function [X_solved_active, active_set_mask, E_path, converged, last_iter] = loca
     M_data, G_solver, alpha_penalty_val, O_orient, max_iter, tol, dgap_freq, verbose)
 % Solves L1/L2 MxNE using Block Coordinate Descent.
 
+    dgap_freq = max(1, min(round(dgap_freq), max_iter));
     [~, Nt_proc] = size(M_data);
     [~, Ns_proc] = size(G_solver);
     N_pos_proc = Ns_proc / O_orient;
@@ -363,7 +403,7 @@ function [X_solved_active, active_set_mask, E_path, converged, last_iter] = loca
     X = zeros(Ns_proc, Nt_proc);
     R = M_data;
 
-    E_path = nan(ceil(max_iter / dgap_freq) + 2, 1);
+    E_path = nan(max_iter + 2, 1);
     n_E = 0;
     converged = false;
     last_iter = max_iter;
@@ -415,18 +455,21 @@ function [X_solved_active, active_set_mask, E_path, converged, last_iter] = loca
             X(idx_block, :) = X_j_new;
         end
         
-        if mod(iter_bcd, dgap_freq) == 0 || iter_bcd == max_iter || iter_bcd == 1
+        check_gap = mod(iter_bcd, dgap_freq) == 0 || iter_bcd == max_iter || iter_bcd == 1;
+        if check_gap
             [actual_gap, p_obj, ~] = local_dgap_l21(M_data, G_solver, X, alpha_penalty_val, O_orient);
             n_E = n_E + 1;
             E_path(n_E) = p_obj;
+            gap_tol = max(tol, tol * max(1, abs(p_obj)));
+            rel_gap = actual_gap / max(1, abs(p_obj));
             
             if iter_bcd > 1 
                 if verbose
-                    fprintf('    BCD Iter %4d: Pobj=%.4e, DGap=%.2e (Tol=%.1e), Nactive_locs=%d\n', ...
-                        iter_bcd, p_obj, actual_gap, tol, ...
+                    fprintf('    BCD Iter %4d: Pobj=%.4e, DGap=%.2e, RelGap=%.2e, Nactive_locs=%d\n', ...
+                        iter_bcd, p_obj, actual_gap, rel_gap, ...
                         sum(any(reshape(local_compute_active_mask(X, O_orient), O_orient,[]),1)));
                 end
-                if actual_gap < tol
+                if actual_gap <= gap_tol
                     if verbose, fprintf('    BCD converged (Duality Gap).\n'); end
                     converged = true;
                     break;
@@ -434,10 +477,22 @@ function [X_solved_active, active_set_mask, E_path, converged, last_iter] = loca
             end
         end
         
-        if iter_bcd > 1 && norm(X(:) - X_old_iter(:),'fro') / (norm(X_old_iter(:),'fro')+eps) < tol/100
-            if verbose, fprintf('    BCD converged (X change) at iter %d.\n', iter_bcd); end
-            converged = true;
-            break;
+        rel_change = norm(X(:) - X_old_iter(:),'fro') / (norm(X_old_iter(:),'fro') + eps);
+        if iter_bcd > 1 && rel_change < tol / 100 && ~check_gap
+            [actual_gap, p_obj, ~] = local_dgap_l21(M_data, G_solver, X, alpha_penalty_val, O_orient);
+            n_E = n_E + 1;
+            E_path(n_E) = p_obj;
+            gap_tol = max(tol, tol * max(1, abs(p_obj)));
+            rel_gap = actual_gap / max(1, abs(p_obj));
+            if verbose
+                fprintf('    BCD Iter %4d: small X change %.2e, DGap=%.2e, RelGap=%.2e\n', ...
+                    iter_bcd, rel_change, actual_gap, rel_gap);
+            end
+            if actual_gap <= gap_tol
+                if verbose, fprintf('    BCD converged (Duality Gap after X-change check).\n'); end
+                converged = true;
+                break;
+            end
         end
     end
     
@@ -495,6 +550,8 @@ function [gap, p_obj, d_obj] = local_dgap_l21(M_data, G_full, X_full, alpha_val,
     
     gap = p_obj - d_obj;
     if isnan(gap) && ~isnan(p_obj), gap = p_obj; end
+    if ~isfinite(gap), gap = p_obj; end
+    gap = max(gap, 0);
 end
 
 
@@ -558,6 +615,25 @@ function local_check_option(value, allowed)
     if ~ismember(value, allowed)
         error('seal_irMxNE:InvalidOption', 'Invalid value: %s. Allowed: %s', value, strjoin(allowed, ', '));
     end
+end
+
+function tf = isLogicalLike(value)
+    tf = (islogical(value) && isscalar(value)) || ...
+        (isnumeric(value) && isscalar(value)) || ...
+        ischar(value) || ...
+        (isstring(value) && isscalar(value));
+end
+
+function tf = localToLogical(value)
+    if islogical(value)
+        tf = value;
+    elseif isnumeric(value)
+        tf = value ~= 0;
+    else
+        value = lower(strtrim(char(string(value))));
+        tf = any(strcmp(value, {'true', '1', 'yes', 'on'}));
+    end
+    tf = logical(tf(1));
 end
 
 

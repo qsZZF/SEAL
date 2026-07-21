@@ -46,6 +46,10 @@ end
 
 algorithm = canonicalAlgorithmName(opts.Algorithm);
 parameters = fillAlgorithmDefaults(algorithm, opts.Parameters);
+if strcmpi(algorithm, 'STOUT') && ~isempty(quickData.Srate) && ...
+        (~isfield(parameters, 'SamplingRate') || isempty(parameters.SamplingRate))
+    parameters.SamplingRate = quickData.Srate;
+end
 
 data = double(quickData.Data);
 leadfield = double(quickData.Leadfield);
@@ -808,8 +812,21 @@ params.NoiseCovariance = R;
 params.NumOrientations = nOrientations;
 paramCell = structToNameValue(params);
 nInputs = abs(nargin(functionName));
-if nInputs >= 4
-    [source, algorithmInfo] = feval(functionName, X, L, cortex, paramCell{:});
+needsVertConn = any(strcmpi(functionName, {'seal_dMAP', 'seal_dSPN', 'seal_TS_Champagne'}));
+needsCortex = any(strcmpi(functionName, ...
+    {'seal_BESTIES', 'seal_SmoothChampagne', 'seal_IRES', 'seal_VSSI_Lp', 'seal_VSSI_GGD'}));
+if needsVertConn
+    if ~isfield(cortex, 'VertConn') || isempty(cortex.VertConn)
+        error('SEAL:QuickSource:MissingVertConn', ...
+            'Algorithm "%s" requires Cortex.VertConn.', algorithm);
+    end
+    thirdArg = cortex.VertConn;
+elseif needsCortex || nInputs >= 4
+    thirdArg = cortex;
+end
+
+if needsVertConn || needsCortex || nInputs >= 4
+    [source, algorithmInfo] = feval(functionName, X, L, thirdArg, paramCell{:});
 else
     [source, algorithmInfo] = feval(functionName, X, L, paramCell{:});
 end

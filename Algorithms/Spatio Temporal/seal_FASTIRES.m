@@ -11,7 +11,8 @@ function [Source_Estimate, Parameters] = seal_FASTIRES(Data, L, sourceSpaceInfo,
 %       Data (double matrix): Nchannels x Ntimepoints matrix of measured data.
 %       L (double matrix): Nchannels x Nsources lead field matrix.
 %       sourceSpaceInfo (struct): Struct with source space geometry. Required:
-%           .EdgeOperator (sparse matrix): Nedges x Nsources_loc edge operator (V).
+%           .VertConn or .EdgeOperator. VertConn is converted to a graph
+%           incidence edge operator and expanded across orientations.
 %
 %   Optional Name-Value Pair Inputs:
 %       'NoiseCovariance' (double matrix): Initial noise covariance matrix. Default: [].
@@ -39,7 +40,9 @@ function [Source_Estimate, Parameters] = seal_FASTIRES(Data, L, sourceSpaceInfo,
 %           .CostHistory (vector): Cost function values per iteration.
 %           .NumIterationsPerformed (integer): Total reweighting iterations.
 %
-%   Reference: Sohrabpour et al., "Noninvasive Electromagnetic Source Imaging of Spatio-temporally Distributed Epileptogenic Brain Sources", 2020.
+%   References:
+%       Sohrabpour et al. (2020), Nature Communications.
+%       Jiang et al. (2022), NeuroImage: Clinical, DOI:10.1016/j.nicl.2021.102903.
 
 %% --- Input Parsing ---
 p = inputParser;
@@ -49,9 +52,9 @@ addRequired(p, 'Data', @(x) isnumeric(x) && ismatrix(x));
 addRequired(p, 'L', @(x) isnumeric(x) && ismatrix(x));
 addRequired(p, 'sourceSpaceInfo', @isstruct);
 
-addParameter(p, 'NoiseCovariance', [], @(x) ismatrix(x) && issymmetric(x));
-addParameter(p, 'InitialTBFs', [], @(x) ismatrix(x));
-addParameter(p, 'NumTBFs', 4, @(x) isscalar(x) && x > 0);
+addParameter(p, 'NoiseCovariance', [], @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
+addParameter(p, 'InitialTBFs', [], @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
+addParameter(p, 'NumTBFs', 4, @(x) isnumeric(x) && isscalar(x) && x > 0);
 addParameter(p, 'Alpha', 0.08, @(x) isvector(x) && all(x > 0));
 addParameter(p, 'Lambda', [], @(x) isempty(x) || (isscalar(x) && x > 0));
 addParameter(p, 'BettaTilda', [], @(x) isempty(x) || (isscalar(x) && x > 0));
@@ -85,13 +88,30 @@ Cnoise = Parameters.OptionsPassed.NoiseCovariance;
 Phi = Parameters.OptionsPassed.InitialTBFs;
 numTBFs = Parameters.OptionsPassed.NumTBFs;
 
+Data = double(Data);
+L = double(L);
+maxIter = max(1, round(maxIter));
+numItX = max(1, round(numItX));
+numItY = max(1, round(numItY));
+numItProj = max(1, round(numItProj));
+numTBFs = max(1, round(numTBFs));
+nd = round(nd);
+
 %% --- Initialization ---
 [nSensor, nSources_total] = size(L);
 nSamp = size(Data, 2);
 nSources_loc = nSources_total / nd;
 
+if size(Data, 1) ~= nSensor
+    error('seal_FASTIRES:DataLeadfieldMismatch', ...
+        'Data rows (%d) must match L rows (%d).', size(Data, 1), nSensor);
+end
 if mod(nSources_total, nd) ~= 0
-    error('Lead field columns (%d) must be divisible by NumOrientations (%d).', nSources_total, nd);
+    error('seal_FASTIRES:NumOrientationsMismatch', ...
+        'Lead field columns (%d) must be divisible by NumOrientations (%d).', nSources_total, nd);
+end
+if any(~isfinite(Data(:))) || any(~isfinite(L(:)))
+    error('seal_FASTIRES:InvalidInput', 'Data and L must contain finite values.');
 end
 
 % Initialize noise covariance
@@ -103,12 +123,19 @@ if isempty(Cnoise)
 end
 
 Cnoise = (Cnoise + Cnoise') / 2;
-Sigma_inv_half = chol(inv(Cnoise + 1e-8 * eye(nSensor)), 'lower');
+[Vn, Dn] = eig(Cnoise);
+noiseEig = real(diag(Dn));
+noiseFloor = max(max(noiseEig) * 1e-12, eps);
+noiseEig(noiseEig < noiseFloor) = noiseFloor;
+Sigma_inv_half = diag(1 ./ sqrt(noiseEig)) * Vn';
 
 % Initialize TBFs
 if isempty(Phi)
     [~, ~, tD] = svd(Sigma_inv_half * Data, 'econ');
     Phi = tD(:, 1:min(numTBFs, size(tD, 2)))';
+elseif size(Phi, 2) ~= nSamp
+    error('seal_FASTIRES:InitialTBFsSize', ...
+        'InitialTBFs must be K x T, where T is the number of data samples (%d).', nSamp);
 end
 numTBFs = size(Phi, 1);
 
@@ -117,11 +144,7 @@ Data_norm = Sigma_inv_half * Data;
 L_norm = Sigma_inv_half * L;
 
 % Edge operator
-V = sourceSpaceInfo.EdgeOperator;
-if size(V, 2) ~= nSources_total
-    error('EdgeOperator must have %d columns for %d source locations.', nSources_loc, nSources_loc);
-end
-% V = kron(V, speye(nd));
+[V, edgeInfo] = resolveEdgeOperator(sourceSpaceInfo, nSources_loc, nd);
 nEdges = size(V, 1);
 
 % Precompute matrices
@@ -129,7 +152,7 @@ C_t = Phi * Phi' + 1e-8 * eye(numTBFs);
 TBF_norm = Phi.'*(C_t\Phi);
 T_norm = pinv(C_t) * Phi;
 W_v = V' * V;
-L_v = 1.01 * svds(W_v, 1);
+L_v = max(1.01 * localLargestSingularValue(W_v), eps);
 Abbas = L_norm * L_norm';
 [U, D, ~] = svd(Abbas);
 if any(diag(D) < -1e-10)
@@ -153,15 +176,16 @@ K_U = U' * L_norm;
 if isempty(betta_tilda)
     dof_eff = nSensor * nSamp;
     conf_level = 0.99;
-    betta_tilda = chi2inv(conf_level, dof_eff);
+    betta_tilda = localChi2Inv(conf_level, dof_eff);
 end
 % Lambda
 if isempty(lambda)
-    lambda = 1.01 * max(1, svds(L_norm, 1)^2 * sqrt(nSensor) / max(norms(L_norm' * Data_norm)));
+    dataGradNorm = max(norms(L_norm' * Data_norm));
+    lambda = 1.01 * max(1, localLargestSingularValue(L_norm)^2 * sqrt(nSensor) / max(dataGradNorm, realmin));
 end
 
 % Initialize solution
-D_W = 1 ./ (norms(L_norm) + 1e-20);
+D_W = 1 ./ max(norms(L_norm), 1e-20);
 x_0 = (L_norm' * pinv(L_norm * L_norm' + mean(diag(D)) * eye(nSensor)) * (Data_norm * Phi'/C_t)) .* repmat(D_W', 1, numTBFs);
 W = ones(nSources_total, numTBFs);
 W_d = ones(nEdges, numTBFs);
@@ -176,9 +200,8 @@ num_alpha = numel(alpha_vec);
 
 %% --- Main Iterative Loop ---
 
-J_sol = zeros(nSources_total, numTBFs, maxIter, num_alpha);
-Y_sol = zeros(nEdges, numTBFs, maxIter, num_alpha);
 Parameters.LearnedAlpha = zeros(num_alpha, 1);
+Parameters.NumIterationsPerformed = zeros(num_alpha, 1);
 
 fprintf('Running FAST-IRES algorithm...\n');
 for i_alpha = 1:num_alpha
@@ -190,11 +213,8 @@ for i_alpha = 1:num_alpha
     weight_it = 0;
     stop_itr = false;
 
-    while ~stop_itr
+    while ~stop_itr && weight_it < maxIter
         weight_it = weight_it + 1;
-        if weight_it > maxIter
-            stop_itr = true;
-        end
 
         % FISTA-ADMM Core
         y_cond = true;
@@ -205,28 +225,22 @@ for i_alpha = 1:num_alpha
         u = zeros(size(y));
         e_rel = 1e-4;
         e_abs = 1e-8;
-        tau = 2;
-        mu = 10;
 
-        while y_cond
+        while y_cond && y_it < numItY
             y_it = y_it + 1;
-            if y_it > numItY
-                y_cond = false;
-            end
 
             t_old = 1;
             x_it = 0;
             x_cond = true;
 
-            while x_cond
+            while x_cond && x_it < numItX
                 x_it = x_it + 1;
-                if x_it > numItX
-                    x_cond = false;
-                end
 
                 % x-update with soft thresholding
-                Alpha = diag(sum(abs(x_0_iter)) / max(sum(abs(x_0_iter))));
-                x_new_tran = wthresh(x_tild - (W_v * x_tild - V' * (y + u)) / L_v, 's', (W_iter * Alpha) * (alpha / lambda / L_v));
+                Alpha = localBasisScale(x_0_iter, numTBFs);
+                x_new_tran = localSoftThreshold( ...
+                    x_tild - (W_v * x_tild - V' * (y + u)) / L_v, ...
+                    (W_iter * Alpha) * (alpha / lambda / L_v));
 
                 % Projection step
                 phi_hat = Data_norm - L_norm * x_new_tran * Phi;
@@ -246,7 +260,7 @@ for i_alpha = 1:num_alpha
                 t_new = 0.5 * (1 + sqrt(1 + 4 * t_old^2));
                 x_tild = x_new + ((t_old - 1) / t_new) * (x_new - x_old);
 
-                if norm(x_new - x_old, 'fro') / norm(x_new, 'fro') < epsilon
+                if norm(x_new - x_old, 'fro') / max(norm(x_new, 'fro'), realmin) < epsilon
                     x_cond = false;
                 end
                 x_old = x_new;
@@ -254,7 +268,7 @@ for i_alpha = 1:num_alpha
             end
 
             % y-update
-            y_new = wthresh(V * x_new - u, 's', W_d_iter / lambda);
+            y_new = localSoftThreshold(V * x_new - u, W_d_iter / lambda);
 
             % Convergence check
             prim_res = norm(y_new - V * x_new, 'fro');
@@ -268,21 +282,9 @@ for i_alpha = 1:num_alpha
 
             y = y_new;
             u = u + y - V * x_new;
-
-            % Dynamic lambda update
-%             if prim_res > mu * dual_res
-%                 lambda = lambda * tau;
-%                 u = u / tau;
-%             elseif dual_res > mu * prim_res
-%                 lambda = lambda / tau;
-%                 u = u * tau;
-%             end
         end
 
         % Reweighting
-        J_sol(:, :, weight_it, i_alpha) = x_new;
-        Y_sol(:, :, weight_it, i_alpha) = y;
-
         J_n = reshape(x_new, [nd, nSources_loc, numTBFs]);
         Ab_J = squeeze(norms(J_n)) + 1e-20;
         Y_n = reshape(V * x_new, [nd, nEdges/nd, numTBFs]);
@@ -290,23 +292,15 @@ for i_alpha = 1:num_alpha
 
         W_old = W_iter;
         W_tr = 1 ./ (Ab_J ./ repmat(max(Ab_J), [nSources_loc, 1]) + eps_reweight);
-%         W_iter = zeros(nSources_total, numTBFs);
-%         for d = 1:nd
-%             W_iter(d:nd:end, :) = W_tr;
-%         end
         W_iter = repelem(W_tr,nd,1);
         
         W_d_old = W_d_iter;
         W_d_tr = 1 ./ (Ab_Y ./ repmat(max(Ab_Y), [nEdges/nd, 1]) + eps_reweight);
-%         W_d_iter = zeros(nEdges, numTBFs);
-%         for d = 1:nd
-%             W_d_iter(d:nd:end, :) = W_d_tr;
-%         end
         W_d_iter = repelem(W_d_tr,nd,1);
 
         % Cost function
         Residual = Data_norm - L_norm * x_new * Phi;
-        cost = 0.5 * norm(Residual, 'fro')^2 + alpha * sum(sum(Ab_Y)) + sum(sum(Ab_J));
+        cost = 0.5 * norm(Residual, 'fro')^2 + alpha * sum(sum(Ab_J)) + sum(sum(Ab_Y));
         costlist = [costlist, cost];
 
         % Stopping criterion
@@ -319,9 +313,11 @@ for i_alpha = 1:num_alpha
     end
 
     Parameters.LearnedAlpha(i_alpha) = alpha;
+    Parameters.NumIterationsPerformed(i_alpha) = weight_it;
     Parameters.CostHistory{i_alpha} = costlist;
-    x = wthresh(x_new, 's', (W_iter * Alpha) * (alpha / lambda / L_v));
-    y = wthresh(V * x_new - u, 's', W_d_iter / lambda);
+    Alpha = localBasisScale(x_new, numTBFs);
+    x = localSoftThreshold(x_new, (W_iter * Alpha) * (alpha / lambda / L_v));
+    y = localSoftThreshold(V * x_new - u, W_d_iter / lambda);
     Source_Estimate{i_alpha} = x * Phi;
     Parameters.InverseOperator{i_alpha} = x;
     Parameters.EdgeEstimate{i_alpha} = y;
@@ -341,8 +337,12 @@ end
 Parameters.LearnedBettaTilda = betta_tilda;
 Parameters.LearnedLambda = lambda;
 Parameters.LearnedNoiseCovariance = Cnoise;
+Parameters.NoiseWhitening = struct('Method', 'eig', 'Regularization', noiseFloor);
+Parameters.EdgeOperatorInfo = edgeInfo;
 Parameters.TemporalBasisFunctions = Phi;
-Parameters.NumIterationsPerformed = weight_it;
+if num_alpha == 1
+    Parameters.NumIterationsPerformed = Parameters.NumIterationsPerformed(1);
+end
 Parameters.OptionsPassed = p.Results;
 
 
@@ -358,21 +358,117 @@ myfun = @(lambda,Phi,D_0,Betta) sum(Phi./(1+lambda*D_0).^2) - Betta;
 
 Phi       = Phi_i;
 D_0       = diag(D);
-Betta     = betta_tilda;
-Init_zero = 0; 
+Betta     = max(betta_tilda, eps);
 
 fun   = @(lambda) myfun(lambda,Phi,D_0,Betta);
-lambda_ini = max(fzero(fun,Init_zero),0);
+if fun(0) <= 0
+    E = zeros(size(K_U, 2), size(Tp_norm, 2));
+    return;
+end
+
+lambda_hi = 1;
+iter = 0;
+while fun(lambda_hi) > 0 && iter < max(num_it, 1) * 20
+    lambda_hi = lambda_hi * 2;
+    iter = iter + 1;
+end
+if fun(lambda_hi) > 0
+    lambda_ini = lambda_hi;
+else
+    lambda_ini = max(fzero(fun, [0, lambda_hi]), 0);
+end
 
 E = (K_U.'*diag(lambda_ini./(1+lambda_ini*diag(D)))*U.')*Tp_norm;
+end
+
+function [V, info] = resolveEdgeOperator(sourceSpaceInfo, nSources_loc, nd)
+    nSources_total = nSources_loc * nd;
+    info = struct('Mode', '', 'NumLocationEdges', [], 'NumComponentEdges', []);
+
+    if isfield(sourceSpaceInfo, 'EdgeOperator') && ~isempty(sourceSpaceInfo.EdgeOperator)
+        V_in = sparse(double(sourceSpaceInfo.EdgeOperator));
+        if size(V_in, 2) == nSources_total
+            V = V_in;
+            info.Mode = 'component_edge_operator';
+        elseif size(V_in, 2) == nSources_loc
+            V = kron(V_in, speye(nd));
+            info.Mode = 'location_edge_operator_expanded';
+        else
+            error('seal_FASTIRES:EdgeOperatorSize', ...
+                'EdgeOperator must have %d location columns or %d component columns.', ...
+                nSources_loc, nSources_total);
+        end
+    elseif isfield(sourceSpaceInfo, 'VertConn') && ~isempty(sourceSpaceInfo.VertConn)
+        V_loc = localIncidenceFromVertConn(sourceSpaceInfo.VertConn, nSources_loc);
+        V = kron(V_loc, speye(nd));
+        info.Mode = 'vertconn_incidence_expanded';
+    else
+        error('seal_FASTIRES:MissingSourceGraph', ...
+            'sourceSpaceInfo must contain .VertConn or .EdgeOperator for FAST-IRES edge sparsity.');
+    end
+
+    if mod(size(V, 1), nd) ~= 0
+        error('seal_FASTIRES:EdgeOperatorRows', ...
+            'Expanded EdgeOperator rows (%d) must be divisible by NumOrientations (%d).', size(V, 1), nd);
+    end
+    info.NumLocationEdges = size(V, 1) / nd;
+    info.NumComponentEdges = size(V, 1);
+end
+
+function V = localIncidenceFromVertConn(VertConn, nSources_loc)
+    if ~isequal(size(VertConn), [nSources_loc, nSources_loc])
+        error('seal_FASTIRES:VertConnSize', ...
+            'VertConn must be %d x %d source-location adjacency.', nSources_loc, nSources_loc);
+    end
+    A = spones(sparse(VertConn));
+    A = A - spdiags(diag(A), 0, nSources_loc, nSources_loc);
+    A = spones(A | A');
+    [row, col] = find(triu(A, 1));
+    nEdges = numel(row);
+    if nEdges == 0
+        error('seal_FASTIRES:EmptyGraph', 'VertConn does not contain any source-space edges.');
+    end
+    edgeId = (1:nEdges).';
+    V = sparse([edgeId; edgeId], [row; col], [-ones(nEdges, 1); ones(nEdges, 1)], ...
+        nEdges, nSources_loc);
+end
+
+function A = localBasisScale(X, numTBFs)
+    basisEnergy = sum(abs(X), 1);
+    denom = max(basisEnergy);
+    if isempty(denom) || denom <= 0 || ~isfinite(denom)
+        scale = ones(1, numTBFs);
+    else
+        scale = basisEnergy / denom;
+    end
+    A = diag(scale);
+end
+
+function out = localSoftThreshold(input, threshold)
+    out = sign(input) .* max(abs(input) - full(threshold), 0);
+end
+
+function val = localLargestSingularValue(A)
+    if isempty(A) || nnz(A) == 0
+        val = 0;
+        return;
+    end
+    try
+        val = svds(A, 1);
+    catch
+        val = norm(full(A), 2);
+    end
+end
+
+function x = localChi2Inv(p, v)
+    if exist('chi2inv', 'file') == 2
+        x = chi2inv(p, v);
+    else
+        x = 2 * gammaincinv(p, v / 2);
+    end
 end
 
 function n = norms(X)
 % Compute vector norms for each dipole orientation
     n = sqrt(sum(X.^2, 1));
-end
-
-function out = Soft(th, input)
-% Soft thresholding function
-    out = sign(input) .* max(abs(input) - th, 0);
 end

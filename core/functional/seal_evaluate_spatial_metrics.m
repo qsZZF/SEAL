@@ -38,8 +38,8 @@ function Results = seal_evaluate_spatial_metrics(estimated_source_activity, true
 %                                     Default: 0.1 (relative).
 %       'NumStepsROC' (integer): Number of threshold steps for the auxiliary
 %                                     spatially balanced ROC. Default: 100.
-%       'NumStepsPR' (integer): Number of relative threshold steps for
-%                                     PR AUC. Default: 100.
+%       'NumStepsPR' (integer): Retained for backward compatibility. PR AUC
+%                                     uses every distinct source score.
 %       'RepsROC' (integer): Number of repetitions for the auxiliary
 %                                     spatially balanced ROC. Default: 50.
 %       'OrderROC' (integer): Max neighbor order for its close field. Default: 6.
@@ -648,71 +648,48 @@ function [auc_roc, tpr_fpr_curve, ParamROC_local] = compute_spatially_balanced_r
     ParamROC_local.Mean_TPR = mean_tpr; ParamROC_local.Mean_FPR = mean_fpr;
 end
 
-function [auc_pr, precision_recall_curve, ParamPR_local] = compute_pr_auc(s_est_abs, true_active_idx, num_steps)
-    % Relative-threshold PR AUC compatible with ESIspatialMetric.m.
-    if nargin < 3 || isempty(num_steps)
-        num_steps = 100;
-    end
-    num_steps = round(num_steps);
-    num_sources = numel(s_est_abs);
+function [auc_pr, precision_recall_curve, ParamPR_local] = compute_pr_auc(s_est_abs, true_active_idx, ~)
+    % Average precision over every distinct source score.  A fixed grid of
+    % relative thresholds fails for a focal map: its recall can be constant
+    % over the entire grid, spuriously returning a PR AUC of zero.
+    scores = s_est_abs(:);
+    num_sources = numel(scores);
     labels = false(num_sources, 1);
     labels(true_active_idx) = true;
     num_positive = sum(labels);
-    ParamPR_local = struct('Method', 'relative_threshold_trapezoid', ...
+    ParamPR_local = struct('Method', 'ranked_score_average_precision', ...
         'NumPositive', num_positive, ...
         'NumNegative', num_sources - num_positive, ...
-        'NumSteps', num_steps, ...
-        'NormalizedByRecallRange', true);
+        'NumDistinctScores', 0, ...
+        'NormalizedByRecallRange', false);
     if num_positive == 0
         auc_pr = NaN;
         precision_recall_curve = [NaN NaN; NaN NaN];
         return;
     end
 
-    max_s_est = max(s_est_abs);
-    thresholds = ((0:num_steps)' / num_steps) * max_s_est;
-    precision = zeros(num_steps + 1, 1);
-    recall = zeros(num_steps + 1, 1);
+    [scores_sorted, sort_index] = sort(scores, 'descend');
+    labels_sorted = labels(sort_index);
+    group_end = [find(diff(scores_sorted) ~= 0); num_sources];
+    true_positive = cumsum(labels_sorted);
+    predicted_positive = (1:num_sources).';
 
-    if max_s_est <= eps
-        auc_pr = 0;
-        precision_recall_curve = [recall, precision];
-        ParamPR_local.Thresholds = thresholds;
-        ParamPR_local.PrecisionValues = precision;
-        ParamPR_local.RecallValues = recall;
-        return;
-    end
+    recall = true_positive(group_end) / num_positive;
+    precision = true_positive(group_end) ./ predicted_positive(group_end);
+    thresholds = scores_sorted(group_end);
 
-    for i_step = 1:(num_steps + 1)
-        threshold = thresholds(i_step);
-        if threshold == 0
-            estimated_positive = s_est_abs > 0;
-        else
-            estimated_positive = s_est_abs >= threshold;
-        end
+    % The initial point is a conventional empty selection.  Average
+    % precision is a step integral, not a trapezoidal interpolation.
+    recall = [0; recall];
+    precision = [1; precision];
+    thresholds = [Inf; thresholds];
+    auc_pr = sum(diff(recall) .* precision(2:end));
 
-        num_estimated_positive = sum(estimated_positive);
-        true_positive = sum(labels & estimated_positive);
-        if num_estimated_positive > 0
-            precision(i_step) = true_positive / num_estimated_positive;
-        else
-            precision(i_step) = 0;
-        end
-        recall(i_step) = true_positive / num_positive;
-    end
-
-    [recall_sorted, order] = sort(recall);
-    precision_sorted = precision(order);
-    thresholds_sorted = thresholds(order);
-    recall_range = max(recall_sorted) - min(recall_sorted);
-    auc_pr = sum(diff(recall_sorted) .* ...
-        (precision_sorted(1:end-1) + precision_sorted(2:end))) / 2 / ...
-        (recall_range + 1e-12);
-
-    precision_recall_curve = [recall_sorted, precision_sorted];
-    ParamPR_local.Thresholds = thresholds_sorted;
-    ParamPR_local.PrecisionValues = precision_sorted;
-    ParamPR_local.RecallValues = recall_sorted;
+    precision_recall_curve = [recall, precision];
+    ParamPR_local.NumDistinctScores = numel(group_end);
+    ParamPR_local.Thresholds = thresholds;
+    ParamPR_local.PrecisionValues = precision;
+    ParamPR_local.RecallValues = recall;
 end
 
 function aprime_val = compute_aprime(hit_rate, false_alarm_rate)

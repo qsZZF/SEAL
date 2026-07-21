@@ -31,19 +31,20 @@ function peakMem = estimatePeakMemory(algName, nCh, nSrc, nT, nO)
             
         % ========== Sparse / Bayesian ==========
         % Champagne：维护每个源的 gamma (M×1)，sigma_y (N×N) 逆，源协方差
-        case {'Champagne','TS_Champagne'}
+        case {'Champagne','TS_Champagne','SmoothChampagne','Smooth-Cham'}
             peakMem = baseMem + (M + 3*N^2 + M*N) * B;
             
         % BlockChampagne：块结构，内存和普通 Champagne 接近
         case 'BlockChampagne'
             peakMem = baseMem + (M + 3*N^2 + M*N) * B;
             
-        % BESTIES：状态空间模型，需要 Kalman 滤波前向/后向，T 份协方差
+        % BESTIES：VB + MRF + TBF；主要缓存源空间 MxM 后验近似和若干 NxN 传感器矩阵
         case 'BESTIES'
-            peakMem = baseMem + (M + 3*N^2 + M*N + T*N^2) * B;  % ⚠️ T*N^2 很大
+            k = 4;   % 默认 NumTBFs
+            peakMem = baseMem + (3*M^2 + (k+3)*N^2 + M*N + M*k) * B;
             
-        % STARTS / uSTAR：TBF 分解降维到 k 个基
-        case {'STARTS','uSTAR'}
+        % STARTS / sSTARTS / uSTAR：TBF 分解降维到 k 个基
+        case {'STARTS','sSTARTS','uSTAR'}
             k = 4;   % 默认 NumTBFs，可从 prm 读更精确
             peakMem = baseMem + (M*k + k*T + 2*N^2) * B;
             
@@ -51,12 +52,27 @@ function peakMem = estimatePeakMemory(algName, nCh, nSrc, nT, nO)
         % MxNE / irMxNE：迭代 proximal，需要维持 S_prev、gradient buffer
         case {'MxNE','irMxNE','debiased_GroupLasso'}
             peakMem = baseMem + (3*M*T + N*T) * B;
+
+        % FOCUSS: source buffers plus a dense sensor-by-sensor weighted system
+        case 'FOCUSS'
+            peakMem = baseMem + (3*M*T + 2*N^2 + M*N) * B;
             
-        case 'FASTIRES'
+        case {'IRES','FASTIRES'}
             peakMem = baseMem + (4*M*T + M^2) * B;  % 含 Laplacian
+
+        % VSSI-Lp: source, edge-domain primal/dual buffers, and sensor solve
+        case {'VSSI_Lp','VSSI_GGD'}
+            peakMem = baseMem + (12*M*T + 2*M*N + N^2) * B;
+
+        case 'STOUT'
+            peakMem = baseMem + (4*M*T + M*N + N^2) * B;
             
         case {'SISSY_L21','dMAP'}
             peakMem = baseMem + (3*M*T + M^2) * B;
+
+        case 'dSPN'
+            % Low-memory state-space solve: source trajectories plus Kalman gain buffers.
+            peakMem = baseMem + (4*M*T + 3*M*N + 4*N^2 + M) * B;
             
         case 'TFMxNE'
             % 时频字典 K 倍膨胀，取 K=10 估

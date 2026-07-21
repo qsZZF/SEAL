@@ -37,9 +37,13 @@ function [Source_MCMV, Param_MCMV] = seal_MCMV(Data, L, varargin)
 %       'Verbose'                  - 0/1. Default: 0.
 %
 %   Outputs:
-%       Source_MCMV (double matrix): Nsources x Ntimepoints.
+%       Source_MCMV (double matrix): Nsources x Ntimepoints. For
+%                                    NumOrientations > 1, scalar MCMV
+%                                    time courses are expanded back to
+%                                    orientation components.
 %       Param_MCMV (struct):
 %           .InverseOperator       - Nsources x Nchannels.
+%           .ScalarInverseOperator - Nlocations x Nchannels scalar filters.
 %           .OptimalOrientations   - nd x Nlocations.
 %           .SourceOrder           - Order in which sources were selected.
 %           .SelectedSources       - Indices of sources actually solved
@@ -51,14 +55,14 @@ function [Source_MCMV, Param_MCMV] = seal_MCMV(Data, L, varargin)
     p.CaseSensitive = false;
     addRequired(p, 'Data', @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
     addRequired(p, 'L',    @(x) isnumeric(x) && ismatrix(x));
-    addParameter(p, 'DataCovariance',          [],   @(x) isempty(x) || ismatrix(x));
-    addParameter(p, 'NoiseCovariance',         [],   @(x) isempty(x) || ismatrix(x));
-    addParameter(p, 'EvokedCovariance',        [],   @(x) isempty(x) || ismatrix(x));
-    addParameter(p, 'RegularizationParameter', 1e-3, @isscalar);
-    addParameter(p, 'NumOrientations',         1,    @isscalar);
-    addParameter(p, 'MaxIterations',           [],   @(x) isempty(x) || isscalar(x));
-    addParameter(p, 'AutoScaleNoise',          true, @(x) islogical(x) || isnumeric(x));
-    addParameter(p, 'Verbose',                 0,    @isscalar);
+    addParameter(p, 'DataCovariance',          [],   @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
+    addParameter(p, 'NoiseCovariance',         [],   @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
+    addParameter(p, 'EvokedCovariance',        [],   @(x) isempty(x) || (isnumeric(x) && ismatrix(x)));
+    addParameter(p, 'RegularizationParameter', 1e-3, @(x) isnumeric(x) && isscalar(x) && isfinite(x) && x >= 0);
+    addParameter(p, 'NumOrientations',         1,    @(x) isnumeric(x) && isscalar(x) && isfinite(x) && x >= 1 && round(x) == x);
+    addParameter(p, 'MaxIterations',           [],   @(x) isempty(x) || (isnumeric(x) && isscalar(x) && x >= 1));
+    addParameter(p, 'AutoScaleNoise',          true, @(x) isscalar(x) && (islogical(x) || isnumeric(x)));
+    addParameter(p, 'Verbose',                 0,    @(x) isnumeric(x) && isscalar(x));
     parse(p, Data, L, varargin{:});
 
     Data_orig    = p.Results.Data;
@@ -67,7 +71,7 @@ function [Source_MCMV, Param_MCMV] = seal_MCMV(Data, L, varargin)
     C_noise      = p.Results.NoiseCovariance;
     C_avg        = p.Results.EvokedCovariance;
     lambda       = p.Results.RegularizationParameter;
-    nd           = p.Results.NumOrientations;
+    nd           = round(double(p.Results.NumOrientations));
     auto_scale_n = logical(p.Results.AutoScaleNoise);
     verbose      = p.Results.Verbose;
 
@@ -89,10 +93,30 @@ function [Source_MCMV, Param_MCMV] = seal_MCMV(Data, L, varargin)
     end
 
     if isempty(C_noise),  C_noise = eye(Nchannels); end
+    if ~isequal(size(C_noise), [Nchannels, Nchannels])
+        error('seal_MCMV:NoiseCovarianceDimensionMismatch', ...
+              'NoiseCovariance must be %d x %d.', Nchannels, Nchannels);
+    end
+    if ~isempty(C_y_user) && ~isequal(size(C_y_user), [Nchannels, Nchannels])
+        error('seal_MCMV:DataCovarianceDimensionMismatch', ...
+              'DataCovariance must be %d x %d.', Nchannels, Nchannels);
+    end
+    if ~isempty(C_avg) && ~isequal(size(C_avg), [Nchannels, Nchannels])
+        error('seal_MCMV:EvokedCovarianceDimensionMismatch', ...
+              'EvokedCovariance must be %d x %d.', Nchannels, Nchannels);
+    end
+    C_noise = (double(C_noise) + double(C_noise)') / 2;
+    if ~isempty(C_avg)
+        C_avg = (double(C_avg) + double(C_avg)') / 2;
+    end
 
     max_iter = p.Results.MaxIterations;
     if isempty(max_iter), max_iter = min(Nlocs, 30); end
-    max_iter = min(max_iter, Nlocs);
+    if isinf(max_iter)
+        max_iter = Nlocs;
+    else
+        max_iter = min(round(max_iter), Nlocs);
+    end
 
     Is_Evoked = ~isempty(C_avg);
 
@@ -111,7 +135,7 @@ function [Source_MCMV, Param_MCMV] = seal_MCMV(Data, L, varargin)
         Y0  = Data_orig - mean(Data_orig, 2);
         C_y = (Y0 * Y0') / max(Ntp - 1, 1);
     else
-        C_y = C_y_user;
+        C_y = double(C_y_user);
     end
     C_y   = (C_y + C_y') / 2;
     C_reg = C_y + lambda * (trace(C_y) / Nchannels) * eye(Nchannels);
@@ -224,7 +248,7 @@ function [Source_MCMV, Param_MCMV] = seal_MCMV(Data, L, varargin)
             cand_u(c, :) = u(:).';
 
             hu = h * u;
-            Hu = [Hr, hu];                 %#ok<AGROW>  small, OK
+            Hu = [Hr, hu];
             Su = Hu' * iR_working * Hu;
             Tu = Hu' * iR_N_iR    * Hu;
             iTu = invSPD(Tu);
@@ -260,12 +284,21 @@ function [Source_MCMV, Param_MCMV] = seal_MCMV(Data, L, varargin)
     %   size: max_iter x Nchannels
     W_sel = invSPD(Ht * iR * Ht.') * Ht * iR;
 
-    % Map back into a full Nlocs x Nchannels operator (zeros elsewhere)
-    W_full = zeros(Nlocs, Nchannels);
-    W_full(sel_idx, :) = W_sel;
+    % Map back into both scalar location filters and SEAL's orientation-
+    % expanded source convention. Non-selected rows remain zero.
+    W_scalar = zeros(Nlocs, Nchannels);
+    W_scalar(sel_idx, :) = W_sel;
+
+    W_full = zeros(Nsources_total, Nchannels);
+    for k = 1:max_iter
+        loc = sel_idx(k);
+        idx = (loc-1)*nd + (1:nd);
+        W_full(idx, :) = lstU(loc, :).' * W_sel(k, :);
+    end
 
     %% 6. Outputs
     Param_MCMV.InverseOperator     = W_full;
+    Param_MCMV.ScalarInverseOperator = W_scalar;
     Param_MCMV.OptimalOrientations = lstU.';        % nd x Nlocs
     Param_MCMV.SourceOrder         = sel_idx(:).';
     Param_MCMV.SelectedSources     = sel_idx(:).';

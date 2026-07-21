@@ -113,8 +113,6 @@ end
 
 if isempty(MSmap)
     %% --- STAR Mode ---
-    Parameters.AlgorithmMode = 'STAR';
-    fprintf('No microstate maps provided. Running in STAR mode (nd=%d).\n', nd);
     [~,~,Dic] = svd(Data, 'econ');
     Phi = Dic(:, 1:min(p.Results.NumTBFs, size(Dic,2)))';
     opts = p.Results;
@@ -122,8 +120,14 @@ if isempty(MSmap)
     
     % Call the core STAR algorithm
     if strcmpi(RunAlgorithm, 'sSTARTS')
-        [Source_Estimate, star_params] = run_sSTARTS(L, Data, M_prior, opts);
+        Parameters.AlgorithmMode = 'sSTARTS';
+        fprintf('No microstate maps provided. Running sSTARTS mode (nd=%d).\n', nd);
+        [Source_Estimate, star_params] = run_paper_sSTARTS( ...
+            L, Data, sourceSpaceInfo, opts);
+        Parameters.FinalE = star_params.E;
     else
+        Parameters.AlgorithmMode = 'STAR';
+        fprintf('No microstate maps provided. Running in STAR mode (nd=%d).\n', nd);
         [Source_Estimate, star_params] = run_STAR(L, Data, M_prior, opts);
         Parameters.FinalE = star_params.E;
     end
@@ -166,7 +170,8 @@ else
         segment_opts.InitialTBFs = segment_phi; % Override with segment-specific TBFs
 
         if strcmpi(RunAlgorithm, 'sSTARTS')
-            [S_seg, seg_params] = run_sSTARTS(L, segment_data, M_prior, segment_opts);
+            [S_seg, seg_params] = run_paper_sSTARTS( ...
+                L, segment_data, sourceSpaceInfo, segment_opts);
         else
             [S_seg, seg_params] = run_STAR(L, segment_data, M_prior, segment_opts);
         end       
@@ -179,6 +184,24 @@ else
     fprintf('Finished processing all segments.\n');
 end
 
+end
+
+function [S, par] = run_paper_sSTARTS(L, B, sourceSpaceInfo, opts)
+% Route the historical uSTAR option through the standalone paper implementation.
+    [S, result] = seal_sSTARTS(B, L, sourceSpaceInfo, ...
+        'InitialTBFs', opts.InitialTBFs, ...
+        'NumTBFs', opts.NumTBFs, ...
+        'MaxIterations', opts.MaxIterations, ...
+        'Tolerance', opts.Tolerance, ...
+        'NumOrientations', opts.NumOrientations, ...
+        'CwkRegularization', opts.CwkRegularization, ...
+        'Verbose', true);
+
+    par.W = result.SpatialWeights_W;
+    par.Phi = result.TemporalBasisFunctions;
+    par.E = result.EstimatedNoise;
+    par.cost = result.CostHistory;
+    par.sSTARTSParameters = result;
 end
 
 %% --- Core STAR Algorithm Implementation ---
@@ -329,8 +352,8 @@ par.E = E;
 par.cost = costlist;
 end
 
-function [S, par] = run_sSTARTS(L, B, M, opts)
-% Implementation of sSTARTS with Multi-Orientation (Group Sparsity) Support
+function [S, par] = run_sSTARTS_legacy(L, B, M, opts) %#ok<DEFNU>
+% Legacy embedded prototype retained for reproducibility; no longer dispatched.
 
 [nSensor, nSource] = size(L);
 nSamp = size(B, 2);

@@ -32,6 +32,7 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
     addParameter(p, 'sigma_min', 1e-6, @isscalar);
     addParameter(p, 'riccati_iter', 200, @isscalar);
     addParameter(p, 'riccati_tol', 1e-5, @isscalar);
+    addParameter(p, 'InnovationJitter', 1e-8, @(x) isnumeric(x) && isscalar(x) && x >= 0);
     addParameter(p, 'smooth_pass', true, @(x) islogical(x) || isnumeric(x));
 
     parse(p, X, L, VertConn, varargin{:});
@@ -46,6 +47,7 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
     sigma_min = p.Results.sigma_min;
     riccati_iter = p.Results.riccati_iter;
     riccati_tol = p.Results.riccati_tol;
+    innovation_jitter = p.Results.InnovationJitter;
     do_smooth = logical(p.Results.smooth_pass);
 
     %% 2. Dimension Checks
@@ -80,7 +82,7 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
     Fg_loc = bsxfun(@rdivide, VertConn, deg_safe) * 0.99;
 
     if nd > 1
-        Fg = kron(Fg_loc, eye(nd));
+        Fg = kron(Fg_loc, speye(nd));
     else
         Fg = Fg_loc;
     end
@@ -98,6 +100,7 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
     x0 = L' / (L * L' + lambda_init * eye(N_chan)) * X(:, 1);
 
     logL_hist = zeros(max_iter, 1);
+    max_innovation_loading = 0;
 
     fprintf('Starting low-memory dSPN (nd=%d)...\n', nd);
 
@@ -112,7 +115,7 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
         %
         % If you want a tunable scalar A again, it can be reintroduced later,
         % but for stability and low-memory consistency this form is cleaner.
-        F = rho * eye(N_src) + (1 - rho) * Fg;
+        F = rho * speye(N_src) + (1 - rho) * Fg;
 
         % ------------------------------------------------------------
         % B. Steady-state low-rank Riccati iteration
@@ -124,16 +127,10 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
             S = L * U + R;
             S = (S + S') / 2;
 
-            % stable solve through Cholesky
-            [Ls, flag] = chol(S, 'lower');
-            if flag ~= 0
-                S = S + 1e-8 * eye(N_chan);
-                [Ls, flag] = chol(S, 'lower');
-                if flag ~= 0
-                    error('seal_dSPN:InnovationCovarianceNotPD', ...
-                        'Innovation covariance is not positive definite.');
-                end
-            end
+            % stable solve through Cholesky with scale-aware diagonal loading
+            [Ls, S, loading] = local_chol_spd(S, innovation_jitter, ...
+                'seal_dSPN:InnovationCovarianceNotPD');
+            max_innovation_loading = max(max_innovation_loading, loading);
 
             invS_R = Ls' \ (Ls \ R);
             U_new = rho^2 * U * invS_R + L' .* q;
@@ -148,15 +145,9 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
         % final steady-state quantities
         S = L * U + R;
         S = (S + S') / 2;
-        [Ls, flag] = chol(S, 'lower');
-        if flag ~= 0
-            S = S + 1e-8 * eye(N_chan);
-            [Ls, flag] = chol(S, 'lower');
-            if flag ~= 0
-                error('seal_dSPN:InnovationCovarianceNotPD_Final', ...
-                    'Final innovation covariance is not positive definite.');
-            end
-        end
+        [Ls, S, loading] = local_chol_spd(S, innovation_jitter, ...
+            'seal_dSPN:InnovationCovarianceNotPD_Final');
+        max_innovation_loading = max(max_innovation_loading, loading);
 
         % K = U / S, solved stably
         K = (Ls' \ (Ls \ U'))';   % N_src x N_chan
@@ -190,12 +181,10 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
             x_smooth = zeros(N_src, N_time);
             x_smooth(:, N_time) = x_filt(:, N_time);
 
-            % low-memory steady-state smoother gain approximation
-            J = F - K * (L * F);
-
             for t = N_time-1:-1:1
                 dx = x_smooth(:, t+1) - x_pred(:, t+1);
-                x_smooth(:, t) = x_filt(:, t) + J * dx;
+                Fdx = F * dx;
+                x_smooth(:, t) = x_filt(:, t) + Fdx - K * (L * Fdx);
             end
         else
             x_smooth = x_filt;
@@ -256,4 +245,50 @@ function [S_final, Param_dSPN] = seal_dSPN(X, L, VertConn, varargin)
     Param_dSPN.KalmanGain = K;
     Param_dSPN.InnovationCov = S;
     Param_dSPN.LogLikelihoodHistory = logL_hist(1:iter);
+    Param_dSPN.InnovationJitter = innovation_jitter;
+    Param_dSPN.MaxInnovationLoading = max_innovation_loading;
+end
+
+function [Ls, S, total_loading] = local_chol_spd(S, rel_jitter, err_id)
+    n = size(S, 1);
+    S = double((S + S') / 2);
+    if any(~isfinite(S(:)))
+        error(err_id, 'Innovation covariance contains non-finite values.');
+    end
+
+    scale = trace(S) / max(n, 1);
+    if ~isfinite(scale) || scale <= 0
+        scale = norm(S, 'fro') / max(n, 1);
+    end
+    if ~isfinite(scale) || scale <= 0
+        scale = 1;
+    end
+
+    base_loading = max(rel_jitter * scale, eps(scale));
+    eye_n = eye(n);
+    total_loading = 0;
+
+    for attempt = 1:8
+        [Ls, flag] = chol(S, 'lower');
+        if flag == 0 && all(diag(Ls) > 0)
+            return;
+        end
+
+        if attempt == 1
+            min_eig = min(real(eig(S)));
+            if isfinite(min_eig) && min_eig < 0
+                loading = -min_eig + base_loading;
+            else
+                loading = base_loading;
+            end
+        else
+            loading = base_loading * 10^(attempt - 1);
+        end
+
+        S = S + loading * eye_n;
+        total_loading = total_loading + loading;
+    end
+
+    error(err_id, ...
+        'Innovation covariance is not positive definite after adaptive diagonal loading.');
 end
